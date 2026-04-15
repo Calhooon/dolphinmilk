@@ -564,12 +564,21 @@ impl CertificateManager {
 
     /// Check whether the agent already holds a parent-signed `agent-authorization`
     /// certificate whose `fields.name` equals `agent_name` AND whose `fields.capabilities`
-    /// (comma-separated, byte-exact) equals `capabilities_csv`.
+    /// (comma-separated, byte-exact) equals `capabilities_csv` AND is not revoked.
     ///
     /// Returns `true` only when such a cert exists, meaning boot-time re-issuance
     /// can be skipped. Any mismatch (different name, different capabilities, different
-    /// byte ordering) returns `false` and the caller should re-acquire with the
-    /// desired state.
+    /// byte ordering) or a revoked cert returns `false` and the caller should
+    /// re-acquire with the desired state.
+    ///
+    /// The revocation check is critical: a cert's on-disk record can persist
+    /// after its revocation UTXO has been spent/relinquished, leaving the wallet
+    /// in an asymmetric state where `certificate_status()` (which filters revoked)
+    /// returns "none" but `has_matching_parent_cert()` would otherwise say
+    /// "existing cert is fine, skip re-issue." Without the revocation check, the
+    /// daemon boots with a structurally-valid-but-effectively-revoked cert and
+    /// every subsequent `/certificates` query returns empty. Observed on
+    /// worker-bsky-en-11 on 2026-04-15 after a mid-run failure.
     pub async fn has_matching_parent_cert(
         &self,
         agent_name: &str,
@@ -597,6 +606,19 @@ impl CertificateManager {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if cert_name == agent_name && cert_caps == capabilities_csv {
+                // Final guard: skip if the cert is revoked (its revocation UTXO
+                // is no longer in any revocation basket). Without this, a stale
+                // revoked cert causes a boot-time false positive and cluster.js
+                // step 5 times out because /certificates returns "none".
+                let revoked = self.is_revoked(c).await.unwrap_or(false);
+                if revoked {
+                    tracing::warn!(
+                        name = %agent_name,
+                        capabilities = %capabilities_csv,
+                        "has_matching_parent_cert: found matching cert but it is revoked — forcing re-issue"
+                    );
+                    continue;
+                }
                 return Ok(true);
             }
         }
