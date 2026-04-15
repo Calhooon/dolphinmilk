@@ -1,46 +1,31 @@
-# Dolphin Milk (rust-bsv-worm)
+# Dolphin Milk
 
 Autonomous AI agent that pays for its own LLM inference via BSV micropayments (x402).
 
-The agent runs a loop -- **OBSERVE, THINK, ACT, RECORD, BUDGET CHECK** -- where every LLM call is an authenticated HTTP request paid for with satoshis. Every action is recorded as an on-chain proof, creating a verifiable audit trail. The agent operates under real economic pressure: every thought costs money.
+The agent runs a loop — **OBSERVE, THINK, ACT, RECORD, BUDGET CHECK** — where every LLM call is an authenticated HTTP request paid for with satoshis. Every action is recorded as an on-chain proof, creating a verifiable audit trail. The agent operates under real economic pressure: every thought costs money.
 
-## Quick Start
+For end-user install + onboarding, see [README.md](README.md). This file is the contributor / Claude Code orientation doc.
 
-### Prerequisites
-
-- **Rust 1.85+** (2021 edition)
-- **bsv-wallet-cli** running on `localhost:3322` with a funded BSV wallet
-
-### Build and Run
+## Quick Start (from source)
 
 ```bash
-# Build (default: embedded wallet + embedded UI)
-cargo build
+# Default build: embedded wallet + embedded UI + browser tool
+cargo build --release
 
-# Check wallet connectivity
-cargo run -- status
+# Initialize wallet and print funding address
+./target/release/dolphin-milk init
 
-# Single LLM call via x402 (costs a few hundred sats)
-cargo run -- think "What is the capital of France?"
+# Start daemon (HTTP + scheduler + web UI on port 8080)
+./target/release/dolphin-milk serve
 
-# Start agent with a task
-cargo run -- run "Research BSV transaction fees and summarize"
+# Single paid LLM call via x402 (~200 sats)
+./target/release/dolphin-milk think "What is the capital of France?"
 
-# Start HTTP daemon (web UI at http://localhost:8080/ui/)
-cargo run -- serve --port 8080
-
-# Start MCP server for Claude Code / Codex integration
-cargo run -- mcp
+# Run as MCP tool provider for Claude Code / Codex
+./target/release/dolphin-milk mcp
 ```
 
-### Docker
-
-```bash
-docker compose up --build      # Build and start
-open http://localhost:8080/ui/  # Open the web UI
-```
-
-The container connects to `bsv-wallet-cli` on the host via `host.docker.internal:3322`.
+The default build produces a single self-contained binary with an in-process wallet — no `bsv-wallet-cli` required. Power users who want an external wallet can set `DOLPHIN_MILK_WALLET_URL=http://localhost:3322` to point at their own `bsv-wallet-cli`.
 
 ### Configuration
 
@@ -64,7 +49,7 @@ User/API ──▶ HTTP Server (~79 routes) ──▶ Task Spawner ──▶ Age
                                                               │
                               ┌────────────────────────┬──────┴──────┬──────────────┐
                               ▼                        ▼             ▼              ▼
-                          Think (LLM)            Tools (38)    On-chain         Memory
+                          Think (LLM)            Tools (42)    On-chain         Memory
                               │                                (proofs,        (tantivy
                               ▼                                 state,          BM25)
                           x402 Payment                         budget)
@@ -73,7 +58,8 @@ User/API ──▶ HTTP Server (~79 routes) ──▶ Task Spawner ──▶ Age
                           BRC-31 Auth
                               │
                               ▼
-                      bsv-wallet-cli (:3322)
+                      Embedded Wallet (in-process)
+                      or bsv-wallet-cli (:3322)
 ```
 
 **Key boundaries:**
@@ -86,69 +72,56 @@ For a deep dive into internals, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Project Layout
 
-Cargo workspace with 4 members: `dolphin-milk` (root), `bsv-x402-server`, `bsv-x402-llm-bridge`, `examples/x402-service`.
+Cargo workspace with 4 members: `dolphin-milk` (root binary), `bsv-x402-server`, `bsv-x402-llm-bridge`, `examples/x402-service`. Plus a standalone `bsv-worm-sdk` crate for plugin authors.
 
 ```
-src/                        # 158 Rust source files across 26 domain modules
+src/                        # Rust source — agent loop, runtime, server, tools
   runner/                   # Agent loop (lifecycle, step, text extraction, escalation, approval)
   think/                    # LLM inference via x402 (middleware pipeline, OpenAI + Claude providers)
   wallet/                   # BRC-100 wallet client (HTTP + embedded backends)
-  error.rs                  # DmError enum (10 variants)
   auth/                     # BRC-31 Authrite (client + server)
   x402/                     # Payment flow, discovery, cache, circuit breaker
   onchain/                  # Budget tracker, BRC-18 proofs, BRC-48 state tokens
   session/                  # Conversations, SSE events, JSONL transcripts
   memory/                   # Markdown+YAML store, tantivy BM25 search, encryption
-  tools/                    # 38 tools (15 always-on, 23 discoverable) across 14 categories
-  server/                   # Axum HTTP API (~79 routes, 19 handler modules)
-  config/                   # TOML config + env overrides + hot-reload
+  tools/                    # 42 tools (17 always-on, 25 discoverable) across 15 categories
+  server/                   # Axum HTTP API (~79 routes)
+  config/                   # TOML config + DOLPHIN_MILK_* env overrides + hot-reload
   context/                  # System prompt builder + token-aware history management
   skills/                   # Skill loader and registry
   heartbeat/                # Priority scheduler with adaptive tick
   mcp/                      # MCP server + client (rmcp)
   messagebox/               # BRC-33 cross-agent messaging
   orchestration/            # Sub-agent spawning, worktree isolation, budget delegation
-  hooks/                    # Event-driven hook system (config, events, executor)
-  security/                 # Command analysis and security scanning
+  certificates/             # BRC-52 agent authorization and revocation
   analytics/                # Cost analytics, efficiency metrics, ROI reporting
   audit/                    # Audit trail, key linkage revelation
-  certificates/             # BRC-52 agent authorization and revocation
   eval/                     # Evaluation framework (trajectory, grading, regression)
   loop_detect/              # Agent loop detection
   replay/                   # Task replay and fork
-  templates/                # Task templates (10 built-in archetypes)
+  templates/                # Task templates
   moderation.rs             # Cert-driven content moderation
   delivery.rs               # Message delivery with retry queue
   sanitize.rs               # 5-layer prompt injection defense
   logging.rs                # Log redaction (scrubs keys, tokens, BEEF)
   discovery.rs              # BRC-56 peer discovery
-  metrics.rs                # Prometheus metrics (7 metric types)
+  metrics.rs                # Prometheus metrics
   time_estimate.rs          # Human-equivalent time-saved estimation for ROI
-  banner.rs                 # Startup banner display
-  cli.rs                    # CLI argument parsing
-  types.rs                  # Newtype IDs: TaskId, SessionId, ConversationId, ProofTxid
+  cli.rs / main.rs          # CLI entry point (init, run, status, think, fund, serve, mcp, audit, verify-work)
+  error.rs                  # DmError enum
+  types.rs                  # Newtype IDs (TaskId, SessionId, ConversationId, ProofTxid)
   lib.rs                    # Module re-exports
-skills/                     # 8 SKILL.md files loaded at runtime
-  x402/                     # x402 payment decision tree (auto-activated)
-  wallet/                   # Wallet operations skill (auto-activated)
-  messaging/                # Cross-agent messaging (auto-activated, conditional on inbox)
-  browser/                  # Headless Chrome via CDP
-  code-analysis/            # Code analysis
-  image-gen/                # Image generation recipes
-  fleet/                    # Multi-agent fleet management
-  verification/             # Output verification
-tests/                      # 87 test files (~3200 tests) across 19 domain subdirectories
+skills/                     # SKILL.md files loaded at runtime (x402, wallet, messaging, browser, ...)
+tests/                      # ~3200 Rust tests across 87 files
   integration/              # 80 Playwright E2E scenarios (real BSV payments)
-  multi-worm/               # 22 multi-agent orchestration scenarios (Node.js)
-ui/                         # Lit-based web frontend (62 TypeScript files, Vite + Lit)
-bsv-worm-sdk/              # Rust SDK for building plugins (standalone crate, not in workspace)
-bsv-x402-llm-bridge/       # x402 LLM bridge library (workspace member)
-bsv-x402-server/           # x402 server components (workspace member)
-examples/                   # Example configurations and usage (x402-service is a workspace member)
+  multi-worm/               # Multi-agent orchestration scenarios
+ui/                         # Lit-based web frontend (Vite + TypeScript)
+bsv-worm-sdk/               # Rust SDK for building plugins (standalone crate)
+bsv-x402-llm-bridge/        # x402 LLM bridge library (workspace member)
+bsv-x402-server/            # x402 server components (workspace member)
+examples/                   # x402-service demo + plugin examples
 templates/                  # Task and project templates
-docs/                       # Architecture docs, execution plans
-marketing/                  # Marketing materials
-regulatory/                 # Regulatory analysis documents
+docs/                       # Architecture docs (ARCHITECTURE.md, USE-CASES.md, etc.)
 ```
 
 ## Testing
@@ -189,20 +162,20 @@ node run.js                   # Full 80-scenario suite (~$0.30-0.50)
 node test-ui-views.js         # UI view validation (free)
 ```
 
-See `tests/integration/CLAUDE.md` for full documentation, scenario schema, and shadow DOM scraping details.
+See `tests/integration/scenarios.json` for the scenario catalog.
 
-### Multi-Worm Integration Tests
+### Multi-Agent Integration Tests
 
 Multi-agent orchestration scenarios testing cross-agent communication (BRC-33/77/78). Requires two or more agent instances running.
 
 ```bash
 cd tests/multi-worm && npm install  # first time only
 
-node run-scenarios.js                  # Run all 22 scenarios
 node orchestrate.js --scenario 1       # Run a specific scenario
+node orchestrate.js                    # Run the full suite
 ```
 
-See `tests/multi-worm/scenarios.json` for the full scenario catalog.
+See `tests/multi-worm/config.json` for the scenario catalog.
 
 ## Contributing
 
@@ -223,8 +196,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide. The shor
 - **Transcripts:** Append-only JSONL. 18 event types. Never mutate past entries.
 - **Protected paths:** The agent cannot edit `dolphin-milk.toml`, `Cargo.toml`, `Cargo.lock`. Enforced in `tools/sandbox.rs`.
 - **IDs:** Use newtype wrappers (`TaskId`, `SessionId`, etc.) from `types.rs`, not raw strings.
-- **Feature flags:** `embed-ui` (embeds frontend via rust-embed), `embedded-wallet` (in-process wallet via bsv-wallet-toolbox-rs). Both default-enabled.
-- **BSV SDK:** Git dep from `github.com/Calhooon/bsv-rs`. Local dev override: `.cargo/config.toml` (gitignored, template at `.cargo/config.toml.dev`).
+- **Feature flags:** `embed-ui` (embeds frontend via rust-embed), `embedded-wallet` (in-process wallet via bsv-wallet-toolbox-rs), `browser` (headless Chrome via chromiumoxide). All three default-enabled.
+- **BSV SDK:** `bsv-rs` from crates.io (single unified dep, `features = ["full", "http"]`). Local dev override against `~/bsv/bsv-rs` available via `.cargo/config.toml` (gitignored, template at `.cargo/config.toml.dev`).
 
 ### Adding a Tool
 
@@ -237,12 +210,13 @@ Create `skills/my-skill/SKILL.md` with YAML frontmatter (`name`, `description`, 
 ## CLI Reference
 
 ```
-dolphin-milk run [TASK] [--max-iterations N]    # Run agent loop
+dolphin-milk init [--data-dir DIR]               # First-run setup: wallet, identity, funding address, backup warnings
 dolphin-milk status                              # Check wallet connectivity + balance
-dolphin-milk think MESSAGE [--model MODEL]       # Single LLM call via x402
+dolphin-milk think MESSAGE [--model MODEL]       # Single paid LLM call via x402
+dolphin-milk run TASK [--max-iterations N]       # Autonomous agent loop
 dolphin-milk receive [--suffix N]                # Generate a BSV receive address
 dolphin-milk fund TXID [--vout N] [--suffix N]   # Internalize funding from on-chain tx
-dolphin-milk serve --port PORT [--workspace DIR] # Start HTTP daemon + scheduler
+dolphin-milk serve [--port N] [--workspace DIR]  # Start daemon (HTTP + scheduler + web UI). Alias: start
 dolphin-milk mcp                                 # Start MCP server (stdio transport)
 dolphin-milk audit                               # BRC-69 key linkage revelations
 dolphin-milk verify-work                         # Offline custody proof verification
@@ -275,7 +249,7 @@ Key endpoints:
 | GET | /rates/bsv-usd | Multi-source exchange rate |
 | GET | /health | Liveness check (version, uptime) |
 
-The full route table is documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [src/server/CLAUDE.md](src/server/CLAUDE.md). The web UI is served at `/ui/`.
+The full route table is documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The web UI is served at `/ui/`.
 
 ## BSV Protocol Standards
 
