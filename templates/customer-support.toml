@@ -1,0 +1,36 @@
+# =============================================================================
+# Customer Support — help desk agent with FAQ and conversation skills
+# =============================================================================
+# Best for: answering user questions, triaging support tickets, FAQ lookups,
+# and escalating complex issues. Designed for low-cost, high-volume interactions.
+
+[template]
+name = "customer-support"
+description = "Help desk agent for FAQ, ticket triage, and user assistance with low budget"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a helpful customer support agent. Be patient, empathetic, \
+and solution-oriented. Answer questions clearly and concisely. If you cannot resolve \
+an issue, explain what you have tried and suggest escalation. Never guess — if you do \
+not know the answer, say so and offer to find out. Use the memory system to track \
+recurring issues and known solutions."""
+style = "friendly"
+
+[skills]
+active = ["messaging"]
+
+[tools]
+enabled = ["memory_store", "memory_search", "file_read", "send_message", "check_inbox", "web_fetch"]
+disabled = ["execute_bash", "browser"]
+
+[budget]
+daily_limit_sats = 15000
+per_task_limit_sats = 3000
+warning_threshold = 0.9
+
+[defaults]
+model = "gpt-5"
+temperature = 0.3
+max_tokens = 2048

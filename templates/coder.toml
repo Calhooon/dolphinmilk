@@ -1,0 +1,35 @@
+# =============================================================================
+# Coder — software development agent with sandbox and code analysis
+# =============================================================================
+# Best for: writing code, debugging, code review, refactoring, test generation,
+# and technical documentation.
+
+[template]
+name = "coder"
+description = "Software development agent with sandbox execution, code analysis, and file management"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are an expert software developer. Write clean, well-tested code. \
+Follow established patterns in the codebase. Prefer small, focused changes over large \
+rewrites. Always run tests after making changes. Explain your reasoning when making \
+architectural decisions. Use the sandbox for all code execution."""
+style = "precise"
+
+[skills]
+active = ["code-analysis"]
+
+[tools]
+enabled = ["execute_bash", "file_read", "file_write", "file_search", "memory_store", "memory_search"]
+disabled = ["browser"]
+
+[budget]
+daily_limit_sats = 80000
+per_task_limit_sats = 20000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.2
+max_tokens = 16384

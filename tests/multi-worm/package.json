@@ -1,0 +1,22 @@
+{
+  "name": "dolphin-milk-multi-worm-tests",
+  "version": "1.0.0",
+  "description": "Multi-agent Dolphin Milk integration test orchestrator",
+  "scripts": {
+    "start": "node orchestrate.js",
+    "status": "node orchestrate.js --status-only",
+    "test": "node run-scenarios.js",
+    "test:canary": "node run-scenarios.js --tier canary",
+    "test:basic": "node run-scenarios.js --tier basic",
+    "test:full": "node run-scenarios.js",
+    "dry-run": "node run-scenarios.js --dry-run",
+    "validate": "node -e \"require('./lib/validate').validateScenariosFile('./scenarios.json')\"",
+    "grade": "node grade.js",
+    "grade:dry-run": "node grade.js --dry-run",
+    "report": "node report.js",
+    "report:baseline": "node report.js --save-baseline"
+  },
+  "dependencies": {
+    "@bsv/sdk": "file:../../../ts-sdk"
+  }
+}

@@ -1,0 +1,35 @@
+# =============================================================================
+# Researcher — deep research agent with web search and persistent memory
+# =============================================================================
+# Best for: investigative tasks, literature reviews, competitive analysis,
+# fact-checking, and any work requiring thorough information gathering.
+
+[template]
+name = "researcher"
+description = "Deep research agent with web search, browser automation, and persistent memory"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a thorough research agent. Your goal is to find accurate, \
+well-sourced information. Always cross-reference multiple sources before drawing \
+conclusions. Cite your sources. When uncertain, say so explicitly rather than \
+guessing. Organize findings with clear structure: summary first, then details."""
+style = "analytical"
+
+[skills]
+active = ["browser", "x402"]
+
+[tools]
+enabled = ["browser", "web_fetch", "memory_store", "memory_search", "file_write", "file_read", "execute_bash", "discover_services", "discover_endpoints", "x402_call"]
+disabled = []
+
+[budget]
+daily_limit_sats = 50000
+per_task_limit_sats = 15000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.3
+max_tokens = 8192

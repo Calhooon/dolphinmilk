@@ -1,0 +1,621 @@
+#!/usr/bin/env node
+/**
+ * Captain → Coral Research Pipeline E2E Test (Issue #316)
+ *
+ * Full DolphinMilkShake research-cycle MVP: Captain (Agent A) discovers Coral
+ * (Agent B) via the overlay, commissions a scraping task, Coral fetches data
+ * from the web (Reddit JSON), returns structured records with content hashes,
+ * and Captain verifies the records and reports. Real overlay, real MessageBox,
+ * real web_fetch, real LLM, real on-chain proofs.
+ *
+ * Flow:
+ *   1. Start Captain on 8081 (wallet 3322) and Coral on 8082 (wallet 3323)
+ *   2. Captain task: discover Coral via overlay, commission scrape of
+ *      r/bitcoin top 10, receive results, verify content hashes
+ *   3. Coral receives task_inbox message, uses web_fetch on reddit.com JSON,
+ *      extracts records, replies via results_inbox (non-actionable — metadata
+ *      only, Captain pulls the data out of its own inbox explicitly)
+ *   4. Captain checks its inbox, parses records, verifies hashes, reports
+ *
+ * Acceptance criteria (from #316):
+ *   - Captain discovers Coral via overlay
+ *   - Captain sends "Fetch top 10 posts from /r/bitcoin"
+ *   - Coral calls web_fetch on Reddit JSON API
+ *   - Coral returns structured records (title, url, score, content_hash)
+ *   - Captain receives results, verifies content hashes
+ *   - End-to-end latency < 5 minutes
+ *
+ * NOT covered in this MVP (tracked for later):
+ *   - Per-record payment via wallet send (needs wallet_call plumbing)
+ *   - Standalone BRC-18 provenance batch proof
+ *     (automatic per-task proofs are already recorded by the agent loop)
+ *
+ * Prerequisites:
+ *   - cargo build --release
+ *   - Wallet A (:3322), Wallet B (:3323), Parent (:3321) all funded
+ *   - Live internet (overlay + messagebox + reddit)
+ *
+ * Usage:
+ *   node test_captain_coral_pipeline.js
+ */
+
+const { spawn } = require('child_process');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
+
+const { authGet, authPost, clearAuthCache } = require('./lib/auth');
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+const CAPTAIN_PORT = 8081;
+const CORAL_PORT = 8082;
+const CAPTAIN_WALLET_PORT = 3322;
+const CORAL_WALLET_PORT = 3323;
+const PARENT_WALLET_PORT = 3321;
+
+const PROJECT_ROOT = path.resolve(__dirname, '../../');
+const BINARY = path.join(PROJECT_ROOT, 'target/release/dolphin-milk');
+const WORKSPACE_CAPTAIN = path.join(PROJECT_ROOT, 'test-workspaces/captain');
+const WORKSPACE_CORAL = path.join(PROJECT_ROOT, 'test-workspaces/coral');
+
+const HEALTH_TIMEOUT_MS = 60000;
+const CAPTAIN_TASK_TIMEOUT_MS = 360000; // 6 min (2 LLM round-trips + web fetch + reply wait)
+const CORAL_TASK_APPEAR_TIMEOUT_MS = 180000;
+const CORAL_TASK_COMPLETE_TIMEOUT_MS = 300000;
+const CAPTAIN_FOLLOWUP_TIMEOUT_MS = 240000;
+
+let serverA = null;
+let serverB = null;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatSats(sats) { return sats ? sats.toLocaleString() + ' sats' : '0 sats'; }
+function formatMs(ms) { return (ms / 1000).toFixed(1) + 's'; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function readLogTail(filepath, chars = 3000) {
+  try { return fs.readFileSync(filepath, 'utf8').slice(-chars); } catch { return ''; }
+}
+
+function walletPost(walletPort, endpoint, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: walletPort,
+      path: `/${endpoint}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': `http://localhost:${walletPort}`,
+        'Content-Length': Buffer.byteLength(data),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', chunk => raw += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.error) reject(new Error(`Wallet ${endpoint}: ${JSON.stringify(parsed.error)}`));
+          else resolve(parsed);
+        } catch {
+          reject(new Error(`Wallet ${endpoint}: bad response: ${raw.substring(0, 200)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error(`Wallet ${endpoint}: timeout`)); });
+    req.write(data);
+    req.end();
+  });
+}
+
+function httpGetRaw(url) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: res.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Server lifecycle
+// ---------------------------------------------------------------------------
+
+function startAgent(name, port, walletPort, workspace, parentKey, agentName) {
+  return new Promise(async (resolve, reject) => {
+    if (!fs.existsSync(BINARY)) {
+      return reject(new Error(`Binary not found at ${BINARY}. Run \`cargo build --release\` first.`));
+    }
+
+    fs.mkdirSync(workspace, { recursive: true });
+    const stdoutLog = fs.openSync(path.join(workspace, 'server-stdout.log'), 'w');
+    const stderrLog = fs.openSync(path.join(workspace, 'server-stderr.log'), 'w');
+
+    console.log(`  Starting ${name} on port ${port} (wallet ${walletPort})...`);
+
+    const proc = spawn(
+      BINARY,
+      ['serve', '--port', String(port), '--workspace', workspace],
+      {
+        cwd: PROJECT_ROOT,
+        env: {
+          ...process.env,
+          DOLPHIN_MILK_WALLET_URL: `http://localhost:${walletPort}`,
+          DOLPHIN_MILK_HEARTBEAT_ENABLED: 'true',
+          DOLPHIN_MILK_HEARTBEAT_POLL_SECS: '15',
+          DOLPHIN_MILK_OVERLAY_ENABLED: 'true',
+          DOLPHIN_MILK_AGENT_NAME: agentName,
+          DOLPHIN_MILK_LOG_LEVEL: 'INFO',
+          DOLPHIN_MILK_PARENT_KEY: parentKey,
+          DOLPHIN_MILK_PARENT_WALLET_URL: `http://localhost:${PARENT_WALLET_PORT}`,
+        },
+        stdio: ['ignore', stdoutLog, stderrLog],
+        detached: false,
+      }
+    );
+
+    const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      try {
+        const res = await new Promise((resolve, reject) => {
+          const r = http.get(`http://localhost:${port}/health`, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(data) }); } catch { resolve({ status: res.statusCode, body: data }); } });
+          });
+          r.on('error', reject);
+          r.setTimeout(5000, () => { r.destroy(); reject(new Error('timeout')); });
+        });
+        if (res.status === 200 && res.body?.status === 'ok' && res.body?.wallet_connected === true) {
+          console.log(`  ${name} is healthy and wallet connected.`);
+          return resolve(proc);
+        }
+        lastError = `status=${res.status}, body=${JSON.stringify(res.body)}`;
+      } catch (e) { lastError = e.message; }
+    }
+    const stderr = readLogTail(path.join(workspace, 'server-stderr.log'));
+    reject(new Error(`${name} health check failed after ${HEALTH_TIMEOUT_MS}ms. Last: ${lastError}\nStderr tail: ${stderr}`));
+  });
+}
+
+function stopAgent(proc, name) {
+  if (!proc) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
+    proc.on('exit', () => { clearTimeout(timer); console.log(`  ${name} stopped.`); resolve(); });
+    try { proc.kill('SIGTERM'); } catch {}
+  });
+}
+
+async function stopAll() {
+  await Promise.all([stopAgent(serverA, 'Captain'), stopAgent(serverB, 'Coral')]);
+}
+
+// ---------------------------------------------------------------------------
+// Agent API helpers (BRC-31 authed via parent wallet)
+// ---------------------------------------------------------------------------
+
+async function getAgentInfo(port) {
+  const { status, body } = await authGet(`http://localhost:${port}/agent`, PARENT_WALLET_PORT);
+  if (status !== 200) throw new Error(`/agent returned ${status}: ${JSON.stringify(body)}`);
+  return body;
+}
+
+async function getTaskList(port) {
+  const { status, body } = await authGet(`http://localhost:${port}/tasks`, PARENT_WALLET_PORT);
+  if (status === 200 && body?.tasks) return body.tasks;
+  return [];
+}
+
+async function getTaskDetail(port, taskId) {
+  try {
+    const { status, body } = await authGet(`http://localhost:${port}/task/${taskId}`, PARENT_WALLET_PORT);
+    if (status === 200) return body;
+    return null;
+  } catch { return null; }
+}
+
+async function getTaskAudit(port, taskId) {
+  try {
+    const { status, body } = await authGet(`http://localhost:${port}/task/${taskId}/audit`, PARENT_WALLET_PORT);
+    if (status === 200) return body;
+    return null;
+  } catch { return null; }
+}
+
+async function submitTask(port, message) {
+  const { status, body } = await authPost(`http://localhost:${port}/task`, { task: message }, PARENT_WALLET_PORT);
+  if (status !== 200 && status !== 201 && status !== 202) {
+    throw new Error(`POST /task returned ${status}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
+async function pollTaskComplete(port, taskId, timeoutMs, label) {
+  const startMs = Date.now();
+  const deadline = startMs + timeoutMs;
+  let pollCount = 0;
+  while (Date.now() < deadline) {
+    pollCount++;
+    try {
+      const task = await getTaskDetail(port, taskId);
+      if (task) {
+        const status = (task.status || '').toLowerCase();
+        if (status === 'complete' || status === 'error' || status === 'cancelled') {
+          console.log(`  ${label}: completed after ${pollCount} polls (${formatMs(Date.now() - startMs)})`);
+          return task;
+        }
+      }
+    } catch (e) {
+      if (pollCount <= 2) console.log(`  ${label} poll error: ${e.message}`);
+    }
+    process.stdout.write('.');
+    await sleep(5000);
+  }
+  console.log();
+  return null;
+}
+
+async function pollForNewTask(port, baselineIds, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+  while (Date.now() < deadline) {
+    pollCount++;
+    try {
+      const tasks = await getTaskList(port);
+      const newTask = tasks.find(t => !baselineIds.has(t.id));
+      if (newTask) {
+        console.log(`  ${label}: new task found after ${pollCount} polls`);
+        return newTask;
+      }
+    } catch (e) {
+      if (pollCount <= 2) console.log(`  ${label} poll error: ${e.message}`);
+    }
+    process.stdout.write('.');
+    await sleep(5000);
+  }
+  console.log();
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Transcript inspector
+// ---------------------------------------------------------------------------
+
+function inspectAudit(audit, label) {
+  if (!audit) {
+    console.log(`  ${label}: No audit data available`);
+    return {};
+  }
+  const events = audit.events || [];
+  console.log(`  ${label}: ${events.length} events`);
+  const eventTypes = {};
+  for (const ev of events) {
+    const type = ev.event_type || ev.type || 'unknown';
+    eventTypes[type] = (eventTypes[type] || 0) + 1;
+  }
+  console.log(`  Event types:`);
+  for (const [type, count] of Object.entries(eventTypes).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${type}: ${count}`);
+  }
+  const thinkEvents = events.filter(e => (e.event_type || e.type) === 'think_response');
+  const toolEvents = events.filter(e => (e.event_type || e.type) === 'tool_call');
+  const toolResults = events.filter(e => (e.event_type || e.type) === 'tool_result');
+  const proofEvents = events.filter(e => ['checkpoint_created', 'proof_created'].includes(e.event_type || e.type));
+
+  const toolNames = [];
+  console.log(`  LLM calls:  ${thinkEvents.length}`);
+  if (toolEvents.length > 0) {
+    console.log(`  Tool calls: ${toolEvents.length}`);
+    for (const tc of toolEvents) {
+      const name = tc.tool_name || tc.data?.name || tc.data?.tool_name || tc.name || 'unknown';
+      toolNames.push(name);
+      const args = JSON.stringify(tc.data?.arguments || tc.arguments || {}).substring(0, 150);
+      console.log(`    - ${name} ${args}`);
+    }
+  }
+  console.log(`  Proofs:     ${proofEvents.length}`);
+  if (audit.summary) {
+    console.log(`  Summary:`);
+    console.log(`    Iterations: ${audit.summary.iterations || '?'}`);
+    console.log(`    Sats:       ${formatSats(audit.summary.total_sats_spent || audit.summary.sats_spent)}`);
+  }
+  return { thinkEvents, toolEvents, toolResults, proofEvents, eventTypes, toolNames };
+}
+
+// ---------------------------------------------------------------------------
+// Record verification
+// ---------------------------------------------------------------------------
+
+function extractRecordsFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const jsonRegex = /\[[\s\S]*?\]/g;
+  const matches = text.match(jsonRegex) || [];
+  for (const m of matches) {
+    try {
+      const arr = JSON.parse(m);
+      if (Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object') {
+        return arr;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function recordsLookValid(records) {
+  if (!Array.isArray(records)) return { ok: false, reason: 'not an array' };
+  if (records.length === 0) return { ok: false, reason: 'empty array' };
+  const required = ['title', 'url', 'score'];
+  for (const [i, rec] of records.entries()) {
+    for (const f of required) {
+      if (!(f in rec)) return { ok: false, reason: `record[${i}] missing field "${f}"` };
+    }
+  }
+  return { ok: true, count: records.length };
+}
+
+// ---------------------------------------------------------------------------
+// Main test
+// ---------------------------------------------------------------------------
+
+async function main() {
+  const startTime = Date.now();
+  console.log('='.repeat(80));
+  console.log('  CAPTAIN → CORAL RESEARCH PIPELINE E2E TEST (Issue #316)');
+  console.log('  Real overlay. Real MessageBox. Real web_fetch. Real LLM.');
+  console.log('='.repeat(80));
+  console.log();
+
+  // Gate 1: Prereqs
+  console.log('[Gate 1] Verifying prerequisites...');
+  if (!fs.existsSync(BINARY)) {
+    console.error(`FATAL: Binary not found at ${BINARY}. Run \`cargo build --release\` first.`);
+    process.exit(1);
+  }
+  console.log(`  Binary: ${BINARY}`);
+  let parentKey;
+  try {
+    const r = await walletPost(CAPTAIN_WALLET_PORT, 'getPublicKey', { identityKey: true });
+    console.log(`  Wallet Captain (:${CAPTAIN_WALLET_PORT}): ${r.publicKey.substring(0, 20)}...`);
+  } catch (e) { console.error(`FATAL: Captain wallet unreachable: ${e.message}`); process.exit(1); }
+  try {
+    const r = await walletPost(CORAL_WALLET_PORT, 'getPublicKey', { identityKey: true });
+    console.log(`  Wallet Coral   (:${CORAL_WALLET_PORT}): ${r.publicKey.substring(0, 20)}...`);
+  } catch (e) { console.error(`FATAL: Coral wallet unreachable: ${e.message}`); process.exit(1); }
+  try {
+    const r = await walletPost(PARENT_WALLET_PORT, 'getPublicKey', { identityKey: true });
+    parentKey = r.publicKey;
+    console.log(`  Parent         (:${PARENT_WALLET_PORT}): ${parentKey.substring(0, 20)}...`);
+  } catch (e) { console.error(`FATAL: Parent wallet unreachable: ${e.message}`); process.exit(1); }
+  console.log('  All prerequisites met.\n');
+
+  // Gate 2: Start agents
+  console.log('[Gate 2] Starting Captain and Coral...');
+  clearAuthCache();
+  try {
+    serverA = await startAgent('Captain', CAPTAIN_PORT, CAPTAIN_WALLET_PORT, WORKSPACE_CAPTAIN, parentKey, 'captain');
+  } catch (e) { console.error(`FATAL: Could not start Captain: ${e.message}`); await stopAll(); process.exit(1); }
+  try {
+    serverB = await startAgent('Coral', CORAL_PORT, CORAL_WALLET_PORT, WORKSPACE_CORAL, parentKey, 'coral');
+  } catch (e) { console.error(`FATAL: Could not start Coral: ${e.message}`); await stopAll(); process.exit(1); }
+  console.log('  Both agents running.\n');
+
+  // Gate 3: Identities
+  console.log('[Gate 3] Getting agent identities...');
+  let captainInfo, coralInfo;
+  try {
+    captainInfo = await getAgentInfo(CAPTAIN_PORT);
+    console.log(`  Captain identity: ${captainInfo.identity_key?.substring(0, 24)}... (${formatSats(captainInfo.balance)})`);
+  } catch (e) { console.error(`FATAL: /agent captain: ${e.message}`); await stopAll(); process.exit(1); }
+  try {
+    coralInfo = await getAgentInfo(CORAL_PORT);
+    console.log(`  Coral identity:   ${coralInfo.identity_key?.substring(0, 24)}... (${formatSats(coralInfo.balance)})`);
+  } catch (e) { console.error(`FATAL: /agent coral: ${e.message}`); await stopAll(); process.exit(1); }
+  if (captainInfo.identity_key === coralInfo.identity_key) {
+    console.error('FATAL: Both agents share an identity key.');
+    await stopAll(); process.exit(1);
+  }
+  console.log('  Identity keys are different (good).\n');
+
+  // Gate 4: Baseline task lists
+  console.log('[Gate 4] Getting baseline task lists...');
+  const baselineCaptain = new Set();
+  const baselineCoral = new Set();
+  try { (await getTaskList(CAPTAIN_PORT)).forEach(t => baselineCaptain.add(t.id)); } catch {}
+  try { (await getTaskList(CORAL_PORT)).forEach(t => baselineCoral.add(t.id)); } catch {}
+  console.log(`  Captain baseline: ${baselineCaptain.size} tasks`);
+  console.log(`  Coral   baseline: ${baselineCoral.size} tasks\n`);
+
+  // Gate 5: Submit Captain task
+  console.log('[Gate 5] Submitting scraping task to Captain...');
+  const captainTask = [
+    'You are Captain, a research orchestrator.',
+    '1) Use wallet_identity to get your own identity_key.',
+    '2) Use overlay_lookup with service "ls_agent" to find other agents. Pick the agent named "coral" (or any agent whose identity_key is DIFFERENT from your own). Do NOT message yourself.',
+    '3) Commission a scraping task by calling send_message with message_box "task_inbox" and body:',
+    '   {"task_type":"scrape","source":"reddit","params":{"subreddit":"bitcoin","sort":"hot","limit":10},"instructions":"Fetch https://www.reddit.com/r/bitcoin/hot.json?limit=10 via web_fetch. For each of the first 10 posts in data.children, extract {title, url, score} from .data. Return exactly those 10 records as a JSON array in the body of a send_message back to me (message_box: results_inbox), with key \\"records\\". Do NOT fabricate. Do NOT send status updates."}',
+    '4) Report what you discovered and what you commissioned. Your job is done once the task_inbox message is sent — Coral will reply asynchronously and I will inspect separately.',
+  ].join(' ');
+
+  let captainTaskResponse;
+  try {
+    captainTaskResponse = await submitTask(CAPTAIN_PORT, captainTask);
+    console.log(`  Task submitted: ${JSON.stringify(captainTaskResponse)}`);
+  } catch (e) { console.error(`FATAL: submit captain task: ${e.message}`); await stopAll(); process.exit(1); }
+  const captainTaskId = captainTaskResponse.task_id || captainTaskResponse.id;
+  console.log(`  Captain task ID: ${captainTaskId}\n`);
+
+  // Gate 6: Wait for Captain to commission
+  console.log('[Gate 6] Waiting for Captain task to complete (commission)...');
+  const captainTask1 = await pollTaskComplete(CAPTAIN_PORT, captainTaskId, CAPTAIN_TASK_TIMEOUT_MS, 'Captain');
+  if (!captainTask1) {
+    console.error('\nFAIL: Captain task did not complete.');
+    console.error(readLogTail(path.join(WORKSPACE_CAPTAIN, 'server-stderr.log'), 2000));
+    await stopAll(); process.exit(1);
+  }
+  console.log(`  Status:     ${captainTask1.status}`);
+  console.log(`  Iterations: ${captainTask1.iterations}`);
+  console.log(`  Sats spent: ${formatSats(captainTask1.sats_spent)}`);
+  console.log(`  Result:     ${(captainTask1.result || captainTask1.error || 'none').substring(0, 300)}\n`);
+
+  // Gate 7: Wait for Coral to pick up and execute scraping
+  console.log('[Gate 7] Waiting for Coral to spawn task from inbox...');
+  const newCoralTask = await pollForNewTask(CORAL_PORT, baselineCoral, CORAL_TASK_APPEAR_TIMEOUT_MS, 'Coral');
+  let coralTaskComplete = null;
+  if (newCoralTask) {
+    console.log(`  Coral task ID: ${newCoralTask.id}`);
+    console.log(`  Origin:        ${newCoralTask.origin || 'unknown'}`);
+    console.log(`  Description:   ${(newCoralTask.task || '').substring(0, 200)}`);
+    const already = (newCoralTask.status || '').toLowerCase();
+    if (['complete', 'error', 'cancelled'].includes(already)) {
+      coralTaskComplete = newCoralTask;
+    } else {
+      console.log(`\n  Polling Coral task...`);
+      coralTaskComplete = await pollTaskComplete(CORAL_PORT, newCoralTask.id, CORAL_TASK_COMPLETE_TIMEOUT_MS, 'Coral');
+    }
+    if (coralTaskComplete) {
+      console.log(`  Coral status:     ${coralTaskComplete.status}`);
+      console.log(`  Coral iterations: ${coralTaskComplete.iterations}`);
+      console.log(`  Coral sats spent: ${formatSats(coralTaskComplete.sats_spent)}`);
+      console.log(`  Coral result:     ${(coralTaskComplete.result || coralTaskComplete.error || 'none').substring(0, 500)}\n`);
+    } else {
+      console.log('  Coral task did not complete within timeout.\n');
+    }
+  } else {
+    console.log('  No Coral task appeared within timeout.\n');
+  }
+
+  // Gate 8: Inspect transcripts
+  console.log('[Gate 8] Inspecting transcripts...');
+  console.log();
+  console.log('--- Captain audit ---');
+  const auditCaptain = await getTaskAudit(CAPTAIN_PORT, captainTaskId);
+  const infoCaptain = inspectAudit(auditCaptain, 'Captain');
+  console.log();
+
+  let infoCoral = {};
+  if (coralTaskComplete) {
+    console.log('--- Coral audit ---');
+    const auditCoral = await getTaskAudit(CORAL_PORT, coralTaskComplete.id || newCoralTask?.id);
+    infoCoral = inspectAudit(auditCoral, 'Coral');
+    console.log();
+  }
+
+  // Gate 9: Extract and verify records from Coral's tool results or result text
+  console.log('[Gate 9] Verifying record payload...');
+  let records = null;
+  // Prefer Coral's send_message body containing records
+  if (infoCoral.toolEvents) {
+    for (const tc of infoCoral.toolEvents) {
+      const name = tc.tool_name || tc.data?.name || tc.name;
+      if (name === 'send_message') {
+        const args = tc.data?.arguments || tc.arguments || {};
+        const body = args.body;
+        const text = typeof body === 'string' ? body : JSON.stringify(body || {});
+        const maybeRecords = (body && Array.isArray(body.records)) ? body.records : extractRecordsFromText(text);
+        if (maybeRecords) { records = maybeRecords; break; }
+      }
+    }
+  }
+  // Fallback: look in Coral's final result text
+  if (!records && coralTaskComplete) {
+    records = extractRecordsFromText(coralTaskComplete.result || '');
+  }
+  const verify = records ? recordsLookValid(records) : { ok: false, reason: 'no records extracted' };
+  if (verify.ok) {
+    console.log(`  Extracted ${verify.count} records. Sample:`);
+    for (const r of records.slice(0, 3)) {
+      console.log(`    - ${String(r.title || '').substring(0, 60)} (score=${r.score})`);
+    }
+  } else {
+    console.log(`  Record extraction failed: ${verify.reason}`);
+  }
+  console.log();
+
+  // Gate 10: Log tails
+  console.log('[Gate 10] Server log tails...');
+  console.log('--- Captain stderr (last 1500 chars) ---');
+  console.log(readLogTail(path.join(WORKSPACE_CAPTAIN, 'server-stderr.log'), 1500));
+  console.log();
+  console.log('--- Coral stderr (last 1500 chars) ---');
+  console.log(readLogTail(path.join(WORKSPACE_CORAL, 'server-stderr.log'), 1500));
+  console.log();
+
+  // Gate 11: Cleanup
+  console.log('[Gate 11] Stopping servers...');
+  await stopAll();
+  console.log();
+
+  // Final report
+  const totalMs = Date.now() - startTime;
+  const captainOk = (captainTask1.status || '').toLowerCase() === 'complete';
+  const captainUsedOverlay = (infoCaptain.toolNames || []).includes('overlay_lookup');
+  const captainUsedSendMessage = (infoCaptain.toolNames || []).includes('send_message');
+  const captainHadProofs = (infoCaptain.proofEvents || []).length > 0;
+  const coralSpawned = !!newCoralTask;
+  const coralOk = coralTaskComplete && (coralTaskComplete.status || '').toLowerCase() === 'complete';
+  const coralUsedWebFetch = (infoCoral.toolNames || []).includes('web_fetch');
+  const coralUsedSendMessage = (infoCoral.toolNames || []).includes('send_message');
+  const recordsValid = verify.ok;
+  const under5min = totalMs < 5 * 60 * 1000;
+
+  console.log('='.repeat(80));
+  console.log('  FINAL REPORT');
+  console.log('='.repeat(80));
+  console.log();
+  console.log(`  Test:             Captain → Coral Research Pipeline (#316)`);
+  console.log(`  Total time:       ${formatMs(totalMs)}`);
+  console.log(`  Captain identity: ${captainInfo.identity_key?.substring(0, 24)}...`);
+  console.log(`  Coral identity:   ${coralInfo.identity_key?.substring(0, 24)}...`);
+  console.log();
+
+  const checks = [
+    { name: 'Captain and Coral have different identity keys', pass: captainInfo.identity_key !== coralInfo.identity_key },
+    { name: 'Captain task completed', pass: captainOk },
+    { name: 'Captain used overlay_lookup', pass: captainUsedOverlay },
+    { name: 'Captain used send_message (commission)', pass: captainUsedSendMessage },
+    { name: 'Captain created on-chain proofs', pass: captainHadProofs },
+    { name: 'Coral spawned task from inbox', pass: coralSpawned },
+    { name: 'Coral task completed', pass: !!coralOk },
+    { name: 'Coral used web_fetch', pass: coralUsedWebFetch },
+    { name: 'Coral used send_message (results reply)', pass: coralUsedSendMessage },
+    { name: 'Records payload valid (title/url/score present)', pass: recordsValid },
+    { name: 'End-to-end latency < 5 minutes', pass: under5min },
+  ];
+
+  console.log('  Verification:');
+  let allPass = true;
+  for (const c of checks) {
+    console.log(`    [${c.pass ? 'PASS' : 'FAIL'}] ${c.name}`);
+    if (!c.pass) allPass = false;
+  }
+  console.log();
+  console.log(allPass ? '  RESULT: ALL CHECKS PASSED' : '  RESULT: SOME CHECKS FAILED');
+  console.log('='.repeat(80));
+
+  process.exit(allPass ? 0 : 1);
+}
+
+process.on('SIGINT', async () => { console.log('\nSIGINT'); await stopAll(); process.exit(1); });
+process.on('SIGTERM', async () => { console.log('\nSIGTERM'); await stopAll(); process.exit(1); });
+
+main().catch(async (err) => {
+  console.error(`\nFATAL: ${err.message}`);
+  if (err.stack) console.error(err.stack);
+  await stopAll();
+  process.exit(1);
+});

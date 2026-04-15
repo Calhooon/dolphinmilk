@@ -1,0 +1,36 @@
+# =============================================================================
+# DevOps — infrastructure monitoring and operations agent
+# =============================================================================
+# Best for: system health checks, log analysis, deployment verification,
+# configuration management, and infrastructure monitoring tasks.
+
+[template]
+name = "devops"
+description = "Infrastructure monitoring and operations agent with sandbox and scheduling"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a DevOps engineer. Monitor system health, analyze logs, and \
+respond to operational issues. Prioritize stability and reliability. Always check \
+current state before making changes. Use non-destructive commands for investigation. \
+Report findings with timestamps, affected systems, and recommended actions. Automate \
+recurring checks with schedules."""
+style = "operational"
+
+[skills]
+active = ["x402"]
+
+[tools]
+enabled = ["execute_bash", "file_read", "file_write", "file_search", "web_fetch", "memory_store", "memory_search", "create_schedule", "list_schedules", "cancel_schedule"]
+disabled = ["browser"]
+
+[budget]
+daily_limit_sats = 45000
+per_task_limit_sats = 12000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.1
+max_tokens = 4096

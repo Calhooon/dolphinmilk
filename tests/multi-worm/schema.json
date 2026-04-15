@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lobsterfarm.io/multi-worm-scenario/v2",
+  "title": "Multi-Worm Test Scenario",
+  "description": "Schema for multi-agent Dolphin Milk test scenarios. Extends the single-agent pattern from tests/integration/scenarios.json to support multiple agents, sequenced steps, and cross-agent assertions.",
+  "type": "object",
+  "required": ["schema_version", "scenarios"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "2.0",
+      "description": "Schema version. Must be '2.0' for multi-worm scenarios."
+    },
+    "default_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 120,
+      "description": "Default per-scenario timeout in seconds. Overridden by scenario-level timeout_seconds."
+    },
+    "scenarios": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scenario" },
+      "minItems": 1,
+      "description": "List of multi-agent test scenarios."
+    }
+  },
+  "additionalProperties": false,
+
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "required": ["id", "tier", "name", "description", "agents", "steps"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Unique scenario ID."
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["canary", "basic", "security", "economic", "full"],
+          "description": "Test tier. canary=health checks, basic=simple cross-agent, security=injection/adversarial, economic=payment flows, full=complete protocol roundtrips."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Snake_case identifier for the scenario."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this scenario tests."
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "minItems": 2,
+          "uniqueItems": true,
+          "description": "Agent names used in this scenario. Must match names in config.json."
+        },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" },
+          "minItems": 1,
+          "description": "Ordered list of test steps executed sequentially."
+        },
+        "assertions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/assertion" },
+          "description": "Post-scenario assertions evaluated after all steps complete."
+        },
+        "budget": {
+          "$ref": "#/$defs/budget",
+          "description": "Scenario-level budget constraints."
+        },
+        "skip": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip this scenario when running the suite."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Scenario-level timeout. Overrides default_timeout_seconds."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Freeform tags for filtering (e.g. 'messaging', 'encryption', 'brc-77')."
+        },
+        "note": {
+          "type": "string",
+          "description": "Implementation notes or known issues."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "step": {
+      "type": "object",
+      "required": ["agent", "action"],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Which agent performs this step. Must be listed in the scenario's agents array."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["task", "wait", "assert", "api"],
+          "description": "Step action type. task=submit a task (POST /task), wait=wait for an event, assert=check a condition, api=direct HTTP call."
+        },
+        "message": {
+          "type": "string",
+          "description": "Task message or content. Supports {{agent.field}} template variables. Required for 'task' action."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-step timeout in seconds."
+        },
+        "max_cost_sats": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum satoshis this step may spend."
+        },
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum agent loop iterations for task steps."
+        },
+        "event": {
+          "type": "string",
+          "enum": ["task_complete", "message_received", "proof_created", "budget_updated"],
+          "description": "Event to wait for. Required for 'wait' action."
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE"],
+          "default": "GET",
+          "description": "HTTP method for 'api' action."
+        },
+        "path": {
+          "type": "string",
+          "description": "API path for 'api' action (e.g. '/health', '/agent', '/task/{{task_id}}/events'). Supports {{template}} variables."
+        },
+        "body": {
+          "type": "object",
+          "description": "Request body for 'api' action with POST/PUT."
+        },
+        "store_as": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Store the result of this step under this key for use in later steps via {{store_as_key}} template variables."
+        },
+        "condition": {
+          "$ref": "#/$defs/assertion",
+          "description": "Assertion condition for 'assert' action."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "task" } } },
+          "then": { "required": ["message"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "wait" } } },
+          "then": { "required": ["event"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "api" } } },
+          "then": { "required": ["path"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "assert" } } },
+          "then": { "required": ["condition"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+
+    "assertion": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "response_contains",
+            "response_not_contains",
+            "response_matches",
+            "status_code",
+            "field_equals",
+            "field_exists",
+            "cost_within",
+            "agents_different_keys",
+            "session_no_error",
+            "tool_succeeded",
+            "tool_result_contains",
+            "no_tool_errors"
+          ],
+          "description": "Assertion type."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Which agent's response to check (if applicable)."
+        },
+        "step": {
+          "type": ["string", "integer"],
+          "description": "Reference to a step index or store_as key whose result to check."
+        },
+        "value": {
+          "description": "Expected value. Type depends on assertion type: string for contains/matches, integer for status_code/cost_within, object for field_equals."
+        },
+        "field": {
+          "type": "string",
+          "description": "JSON field path for field_equals/field_exists assertions (e.g. 'identity_key', 'status')."
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Tool name for tool_succeeded and tool_result_contains assertions."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the assertion."
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_total_sats": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum total satoshis across all agents for this scenario."
+        },
+        "max_per_agent_sats": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum satoshis any single agent may spend."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

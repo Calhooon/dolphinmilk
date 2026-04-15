@@ -1,0 +1,124 @@
+# deny.toml — cargo-deny configuration for bsv-worm
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Run checks:
+#   cargo deny check                  # all checks
+#   cargo deny check licenses         # license compliance only
+#   cargo deny check advisories       # known vulnerabilities
+#   cargo deny check bans             # dependency management
+#   cargo deny check sources          # registry restrictions
+
+# =============================================================================
+# [graph] — Dependency graph configuration
+# =============================================================================
+# Controls which targets and features are considered when building the
+# dependency graph for all checks.
+[graph]
+all-features = false
+no-default-features = false
+
+# =============================================================================
+# [output] — Diagnostic output configuration
+# =============================================================================
+[output]
+feature-depth = 1
+
+# =============================================================================
+# [advisories] — Security vulnerability detection
+# =============================================================================
+# Checks dependencies against the RustSec Advisory Database for known
+# vulnerabilities, unmaintained crates, and yanked versions.
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+# Advisories to explicitly ignore (e.g., false positives or accepted risks).
+# Each entry can be a RUSTSEC ID string or a table with { id, reason }.
+# The `instant` crate is unmaintained (RUSTSEC-2024-0384) but it's a
+# transitive dependency of tantivy and notify — we can't upgrade it.
+ignore = [
+    { id = "RUSTSEC-2024-0384", reason = "transitive dep of tantivy/notify; no upgrade path available" },
+    { id = "RUSTSEC-2026-0009", reason = "time 0.3.39 pinned for compatibility; stack exhaustion DoS not exploitable in our usage" },
+]
+
+# =============================================================================
+# [licenses] — License compliance
+# =============================================================================
+# Ensures all dependencies use licenses compatible with this project.
+# The allowlist contains permissive licenses only; copyleft is denied.
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+[licenses]
+# Allowlist of acceptable open-source licenses (SPDX identifiers).
+# These are all permissive licenses compatible with proprietary use.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "BSL-1.0",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+# The confidence threshold for detecting a license from license text.
+# Higher values require closer matches to canonical license text.
+confidence-threshold = 0.8
+
+# Per-crate license exceptions for crates that need licenses not in the
+# global allowlist. Use sparingly.
+exceptions = []
+
+[licenses.private]
+# Ignore workspace crates that aren't published to a public registry.
+# This applies to crates with `publish = false` in their Cargo.toml.
+ignore = true
+registries = []
+
+# bsv-worm is our own workspace crate and is not published. It has no
+# license field in Cargo.toml. We clarify it as MIT for cargo-deny.
+[[licenses.clarify]]
+crate = "bsv-worm"
+expression = "MIT"
+license-files = []
+
+# =============================================================================
+# [bans] — Dependency management
+# =============================================================================
+# Controls which crates are allowed/denied and flags duplicate versions.
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+# Warn when multiple versions of the same crate appear in the dependency
+# tree. Common in large Rust projects and usually harmless, but worth
+# knowing about for binary size optimization.
+multiple-versions = "warn"
+
+# Allow wildcard version requirements. We use path dependencies (e.g.,
+# bsv-sdk at ../rust-sdk) which may use flexible versioning.
+wildcards = "allow"
+
+# How to highlight duplicate crate paths in dotgraphs.
+highlight = "all"
+
+# =============================================================================
+# [sources] — Registry and source restrictions
+# =============================================================================
+# Restricts where dependencies can be fetched from, preventing supply
+# chain attacks via unknown registries or git repositories.
+# https://embarkstudios.github.io/cargo-deny/checks/sources/cfg.html
+[sources]
+# Deny dependencies from unknown registries (only crates.io is allowed).
+unknown-registry = "deny"
+
+# Warn on dependencies fetched directly from git repositories.
+# Our bsv-sdk is a local path dependency, not a git dependency.
+unknown-git = "warn"
+
+# Only allow crates from the official crates.io registry.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# No git repositories are explicitly allowed. Path dependencies (like
+# bsv-sdk) are handled separately by cargo-deny and don't need listing.
+allow-git = []

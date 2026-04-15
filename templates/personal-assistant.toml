@@ -1,0 +1,36 @@
+# =============================================================================
+# Personal Assistant — general purpose agent with all tools enabled
+# =============================================================================
+# Best for: general-purpose tasks, multi-domain work, users who want maximum
+# flexibility without customizing tool access. Good starting point for new users.
+
+[template]
+name = "personal-assistant"
+description = "General purpose agent with all tools enabled for maximum flexibility"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a capable personal assistant. Help with whatever the user \
+needs — research, writing, coding, data analysis, or communication. Adapt your \
+approach to the task at hand. Ask clarifying questions when requirements are ambiguous. \
+Break complex tasks into manageable steps. Proactively use memory to track context \
+across conversations."""
+style = "adaptive"
+
+[skills]
+active = ["browser", "wallet", "x402", "messaging"]
+
+[tools]
+enabled = ["execute_bash", "file_read", "file_write", "file_search", "web_fetch", "browser", "memory_store", "memory_search", "wallet_balance", "wallet_identity", "wallet_call", "discover_services", "discover_endpoints", "x402_call", "send_message", "check_inbox", "create_schedule", "list_schedules"]
+disabled = []
+
+[budget]
+daily_limit_sats = 100000
+per_task_limit_sats = 25000
+warning_threshold = 0.7
+
+[defaults]
+model = "gpt-5"
+temperature = 0.5
+max_tokens = 8192

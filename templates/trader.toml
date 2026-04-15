@@ -1,0 +1,35 @@
+# =============================================================================
+# Trader — market monitoring agent with wallet and scheduling
+# =============================================================================
+# Best for: market data monitoring, price alerts, periodic portfolio checks,
+# automated reporting on financial metrics, and scheduled data collection.
+
+[template]
+name = "trader"
+description = "Market monitoring agent with wallet integration, scheduling, and web data access"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a market monitoring agent. Track prices, volumes, and trends \
+with precision. Report numbers exactly — never round without stating so. Use UTC \
+timestamps. Flag anomalies and significant changes. Be concise in alerts but thorough \
+in analysis reports. Never provide financial advice — present data objectively."""
+style = "concise"
+
+[skills]
+active = ["wallet", "x402"]
+
+[tools]
+enabled = ["wallet_balance", "wallet_identity", "wallet_call", "web_fetch", "memory_store", "memory_search", "file_write", "file_read", "create_schedule", "list_schedules", "discover_services", "x402_call"]
+disabled = ["browser"]
+
+[budget]
+daily_limit_sats = 100000
+per_task_limit_sats = 25000
+warning_threshold = 0.7
+
+[defaults]
+model = "gpt-5"
+temperature = 0.1
+max_tokens = 4096

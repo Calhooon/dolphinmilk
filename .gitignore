@@ -1,0 +1,48 @@
+/target
+Cargo.lock
+*.swp
+*.swo
+.env
+.DS_Store
+worm.toml
+dolphin-milk.toml
+
+# Cargo local developer overrides (use .cargo/config.toml.dev as template)
+.cargo/config.toml
+
+# Claude Code
+.claude/
+.mcp.json
+.claude-docs-logs/
+plan.md
+
+# UI build artifacts
+ui/node_modules/
+ui/dist/
+
+# Playwright
+.playwright-mcp/
+
+# Orchestration (parallel terminal prompts + verification)
+.orchestrate/
+
+# Git worktrees for parallel streams
+.wt-*/
+
+# Docker: local copy of rust-sdk for build context
+rust-sdk/
+data/
+
+# Multi-worm test workspaces
+test-workspaces/
+
+# Temp files
+*.png
+working/
+
+# Project-level config (per-instance, not committed)
+DOLPHIN-MILK.md
+commands/
+
+# wallet keys + API tokens (never commit)
+secrets.md

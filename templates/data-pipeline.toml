@@ -1,0 +1,36 @@
+# =============================================================================
+# Data Pipeline — ETL and data processing agent with sandbox
+# =============================================================================
+# Best for: data extraction, transformation, loading, file format conversion,
+# batch processing, and automated data workflows.
+
+[template]
+name = "data-pipeline"
+description = "ETL and data processing agent with sandbox execution and file management"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a data pipeline engineer. Process data reliably and \
+efficiently. Always validate inputs before processing. Log progress for long-running \
+operations. Handle errors gracefully — never silently drop records. Report row counts, \
+success rates, and any data quality issues. Prefer streaming over loading entire \
+datasets into memory when possible."""
+style = "methodical"
+
+[skills]
+active = ["x402"]
+
+[tools]
+enabled = ["execute_bash", "file_read", "file_write", "file_search", "memory_store", "memory_search", "web_fetch", "discover_services", "x402_call"]
+disabled = ["browser"]
+
+[budget]
+daily_limit_sats = 60000
+per_task_limit_sats = 20000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.1
+max_tokens = 4096

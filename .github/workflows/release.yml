@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: dolphin-milk-linux-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: dolphin-milk-darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: dolphin-milk-darwin-amd64
+          # aarch64-unknown-linux-gnu deferred to v0.1.1 — openssl-sys cross-compile blocker.
+          # ARM Linux users: cargo install --git https://github.com/calhooon/dolphinmilk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build web UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Cache cargo registry + git + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-${{ matrix.target }}-
+
+      - name: Install cross (for ARM64 Linux)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} \
+              --no-default-features --features "embedded-wallet,embed-ui"
+          else
+            cargo build --release --target ${{ matrix.target }} \
+              --no-default-features --features "embedded-wallet,embed-ui"
+          fi
+
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/dolphin-milk ${{ matrix.artifact }}
+
+      - name: Smoke test binary
+        if: ${{ !matrix.cross }}
+        run: ./${{ matrix.artifact }} --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect binaries + checksums
+        run: |
+          mkdir -p release
+          find artifacts -type f -name 'dolphin-milk-*' -exec cp {} release/ \;
+          cd release && sha256sum dolphin-milk-* > checksums.sha256
+          echo "=== Checksums ==="
+          cat checksums.sha256
+          echo "=== Binaries ==="
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,23 @@
+{
+  "binary": "./target/release/dolphin-milk",
+  "health_timeout_ms": 30000,
+  "health_poll_ms": 1000,
+  "parent_wallet_port": 3321,
+  "agents": {
+    "alice": {
+      "worm_port": 8080,
+      "wallet_port": 3322,
+      "workspace": "./test-workspaces/alice"
+    },
+    "bob": {
+      "worm_port": 8081,
+      "wallet_port": 3323,
+      "workspace": "./test-workspaces/bob"
+    },
+    "charlie": {
+      "worm_port": 8082,
+      "wallet_port": 3323,
+      "workspace": "./test-workspaces/charlie"
+    }
+  }
+}

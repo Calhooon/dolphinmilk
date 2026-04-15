@@ -1,0 +1,23 @@
+{
+  "name": "dolphin-milk-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^2.0.4",
+    "chart.js": "^4.4.0",
+    "dompurify": "^3.2.0",
+    "highlight.js": "^11.11.1",
+    "lit": "^3.2.0",
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

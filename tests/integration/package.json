@@ -1,0 +1,21 @@
+{
+  "name": "dolphin-milk-integration-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-BSV integration tests for Dolphin Milk via Playwright",
+  "scripts": {
+    "test": "node run.js",
+    "test:trivial": "node run.js --tier trivial",
+    "test:medium": "node run.js --tier medium",
+    "test:complex": "node run.js --tier complex",
+    "test:edge": "node run.js --tier edge",
+    "canary": "node run.js --canary",
+    "compare": "node run.js --compare",
+    "dry-run": "node run.js --dry-run",
+    "test:resilience": "node test-resilience.js",
+    "test:resilience:managed": "node test-resilience.js --managed"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}

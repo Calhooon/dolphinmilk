@@ -1,0 +1,507 @@
+[workspace]
+members = [
+    ".",
+    "bsv-x402-server",
+    "bsv-x402-llm-bridge",
+    "examples/x402-service",
+]
+
+[package]
+name = "dolphin-milk"
+version = "0.1.0"
+edition = "2021"
+description = "Autonomous AI agent with BSV micropayments — pays for its own LLM inference via x402, every action becomes an on-chain proof"
+repository = "https://github.com/calhooon/dolphinmilk"
+homepage = "https://github.com/calhooon/dolphinmilk"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["bsv", "ai-agent", "x402", "micropayments", "blockchain"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "dolphin_milk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dolphin-milk"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "2"
+anyhow = "1"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4"] }
+notify = "7"
+croner = "3"
+dotenvy = "0.15"
+ripemd = "0.1"
+glob = "0.3"
+lru = "0.12"
+url = "2"
+tantivy = "0.22"
+serde_yaml = "0.9"
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+http-body-util = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+rmcp = { version = "0.16", features = ["server", "client", "transport-io", "transport-child-process"] }
+schemars = "1.0"
+bsv = { package = "bsv-rs", version = "0.3.4", features = ["full", "http"] }
+futures-util = "0.3"
+async-trait = "0.1"
+chromiumoxide = { version = "0.9", features = ["fetcher", "zip8", "native-tls"], optional = true }
+aho-corasick = "1"
+prometheus = "0.13"
+regex = "1"
+bsv-x402-server = { path = "bsv-x402-server" }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+bsv-wallet-toolbox-rs = { version = "0.3.38", optional = true }
+
+[features]
+default = ["embedded-wallet", "embed-ui", "browser"]
+embed-ui = ["rust-embed", "mime_guess"]
+embedded-wallet = ["bsv-wallet-toolbox-rs"]
+browser = ["chromiumoxide"]
+external-wallet = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+
+# ── Integration tests (organized by domain) ──────────────────
+
+# Core agent loop
+[[test]]
+name = "test_think"
+path = "tests/core/test_think.rs"
+
+[[test]]
+name = "test_context"
+path = "tests/core/test_context.rs"
+
+[[test]]
+name = "test_compact"
+path = "tests/core/test_compact.rs"
+
+[[test]]
+name = "test_compact_integration"
+path = "tests/core/test_compact_integration.rs"
+
+[[test]]
+name = "test_context_intelligence"
+path = "tests/core/test_context_intelligence.rs"
+
+[[test]]
+name = "test_context_fork"
+path = "tests/core/test_context_fork.rs"
+
+[[test]]
+name = "test_identity"
+path = "tests/core/test_identity.rs"
+
+[[test]]
+name = "test_instructions"
+path = "tests/core/test_instructions.rs"
+
+[[test]]
+name = "test_intent_nudge"
+path = "tests/core/test_intent_nudge.rs"
+
+[[test]]
+name = "test_loop_detector"
+path = "tests/core/test_loop_detector.rs"
+
+[[test]]
+name = "test_self_message"
+path = "tests/core/test_self_message.rs"
+
+[[test]]
+name = "test_tool_offload"
+path = "tests/core/test_tool_offload.rs"
+
+[[test]]
+name = "test_model_limits"
+path = "tests/core/test_model_limits.rs"
+
+[[test]]
+name = "test_model_capabilities"
+path = "tests/core/test_model_capabilities.rs"
+
+[[test]]
+name = "test_runner_lifecycle"
+path = "tests/core/test_runner_lifecycle.rs"
+
+# MCP (server + client)
+[[test]]
+name = "test_mcp"
+path = "tests/mcp/test_mcp.rs"
+
+# On-chain (budget, proofs, state, compliance)
+[[test]]
+name = "test_budget"
+path = "tests/onchain/test_budget.rs"
+
+[[test]]
+name = "test_proofs"
+path = "tests/onchain/test_proofs.rs"
+
+[[test]]
+name = "test_state"
+path = "tests/onchain/test_state.rs"
+
+[[test]]
+name = "test_compliance"
+path = "tests/onchain/test_compliance.rs"
+
+[[test]]
+name = "test_escalation_proofs"
+path = "tests/onchain/test_escalation_proofs.rs"
+
+[[test]]
+name = "test_message_proofs"
+path = "tests/onchain/test_message_proofs.rs"
+
+[[test]]
+name = "test_custody_proof"
+path = "tests/onchain/test_custody_proof.rs"
+
+[[test]]
+name = "test_proof_audit"
+path = "tests/onchain/test_proof_audit.rs"
+
+[[test]]
+name = "test_verify_state"
+path = "tests/onchain/test_verify_state.rs"
+
+[[test]]
+name = "test_basket_health"
+path = "tests/onchain/test_basket_health.rs"
+
+[[test]]
+name = "test_consistency_check"
+path = "tests/onchain/test_consistency_check.rs"
+
+[[test]]
+name = "test_state_provenance"
+path = "tests/onchain/test_state_provenance.rs"
+
+# Tools (registry, parallel, introspect, browser)
+[[test]]
+name = "test_tools"
+path = "tests/tools/test_tools.rs"
+
+[[test]]
+name = "test_deferred"
+path = "tests/tools/test_deferred.rs"
+
+[[test]]
+name = "test_parallel_tools"
+path = "tests/tools/test_parallel_tools.rs"
+
+[[test]]
+name = "test_introspect"
+path = "tests/tools/test_introspect.rs"
+
+[[test]]
+name = "test_overlay"
+path = "tests/tools/test_overlay.rs"
+
+[[test]]
+name = "test_browser"
+path = "tests/tools/test_browser.rs"
+required-features = ["browser"]
+
+# Memory (store, maintenance, processing, auto-recall)
+[[test]]
+name = "test_memory"
+path = "tests/memory/test_memory.rs"
+
+[[test]]
+name = "test_memory_maintenance"
+path = "tests/memory/test_memory_maintenance.rs"
+
+[[test]]
+name = "test_memory_processing"
+path = "tests/memory/test_memory_processing.rs"
+
+[[test]]
+name = "test_memory_tamper"
+path = "tests/memory/test_memory_tamper.rs"
+
+[[test]]
+name = "test_auto_recall"
+path = "tests/memory/test_auto_recall.rs"
+
+# Server (HTTP endpoints, SSE events, audit search)
+[[test]]
+name = "test_server"
+path = "tests/server/test_server.rs"
+
+[[test]]
+name = "test_events"
+path = "tests/server/test_events.rs"
+
+[[test]]
+name = "test_audit_search"
+path = "tests/server/test_audit_search.rs"
+
+# Security (auth, injection, leak detection, log redaction, certificates, crypto trust)
+[[test]]
+name = "test_auth"
+path = "tests/security/test_auth.rs"
+
+[[test]]
+name = "test_injection_defense"
+path = "tests/security/test_injection_defense.rs"
+
+[[test]]
+name = "test_leak_detect"
+path = "tests/security/test_leak_detect.rs"
+
+[[test]]
+name = "test_log_redaction"
+path = "tests/security/test_log_redaction.rs"
+
+[[test]]
+name = "test_certificates"
+path = "tests/security/test_certificates.rs"
+
+[[test]]
+name = "test_cryptographic_trust"
+path = "tests/security/test_cryptographic_trust.rs"
+
+[[test]]
+name = "test_key_linkage"
+path = "tests/security/test_key_linkage.rs"
+
+[[test]]
+name = "test_command_security"
+path = "tests/security/test_command_security.rs"
+
+# Comms (messagebox, peer discovery)
+[[test]]
+name = "test_messagebox"
+path = "tests/comms/test_messagebox.rs"
+
+[[test]]
+name = "test_discovery"
+path = "tests/comms/test_discovery.rs"
+
+# Session (conversations, transcripts, schedules)
+[[test]]
+name = "test_conversation"
+path = "tests/session/test_conversation.rs"
+
+[[test]]
+name = "test_transcript"
+path = "tests/session/test_transcript.rs"
+
+[[test]]
+name = "test_message"
+path = "tests/session/test_message.rs"
+
+[[test]]
+name = "test_schedule"
+path = "tests/session/test_schedule.rs"
+
+# Config (config, errors, types, wallet)
+[[test]]
+name = "test_config"
+path = "tests/config/test_config.rs"
+
+[[test]]
+name = "test_error"
+path = "tests/config/test_error.rs"
+
+[[test]]
+name = "test_types"
+path = "tests/config/test_types.rs"
+
+[[test]]
+name = "test_wallet"
+path = "tests/config/test_wallet.rs"
+
+[[test]]
+name = "test_precedence"
+path = "tests/config/test_precedence.rs"
+
+[[test]]
+name = "test_project"
+path = "tests/config/test_project.rs"
+
+[[test]]
+name = "test_embedded_wallet"
+path = "tests/config/test_embedded_wallet.rs"
+required-features = ["embedded-wallet"]
+
+# x402 (payments, discovery, circuit breaker, response cache)
+[[test]]
+name = "test_x402"
+path = "tests/x402/test_x402.rs"
+
+[[test]]
+name = "test_x402_discovery"
+path = "tests/x402/test_x402_discovery.rs"
+
+[[test]]
+name = "test_circuit_breaker"
+path = "tests/x402/test_circuit_breaker.rs"
+
+[[test]]
+name = "test_response_cache"
+path = "tests/x402/test_response_cache.rs"
+
+# Heartbeat
+[[test]]
+name = "test_heartbeat"
+path = "tests/heartbeat/test_heartbeat.rs"
+
+# Skills (loader, state, hooks, telemetry)
+[[test]]
+name = "test_skills"
+path = "tests/skills/test_skills.rs"
+
+[[test]]
+name = "test_skill_state"
+path = "tests/skills/test_skill_state.rs"
+
+[[test]]
+name = "test_skill_hooks_composition"
+path = "tests/skills/test_skill_hooks_composition.rs"
+
+[[test]]
+name = "test_skill_telemetry"
+path = "tests/skills/test_skill_telemetry.rs"
+
+[[test]]
+name = "test_commands"
+path = "tests/skills/test_commands.rs"
+
+# Features (analytics, replay, cold read, escalation, marketplace, metrics, etc.)
+[[test]]
+name = "test_analytics"
+path = "tests/features/test_analytics.rs"
+
+[[test]]
+name = "test_replay"
+path = "tests/features/test_replay.rs"
+
+[[test]]
+name = "test_cold_read"
+path = "tests/features/test_cold_read.rs"
+
+[[test]]
+name = "test_escalation"
+path = "tests/features/test_escalation.rs"
+
+[[test]]
+name = "test_marketplace"
+path = "tests/features/test_marketplace.rs"
+
+[[test]]
+name = "test_metrics"
+path = "tests/features/test_metrics.rs"
+
+[[test]]
+name = "test_moderation"
+path = "tests/features/test_moderation.rs"
+
+[[test]]
+name = "test_rate_limit"
+path = "tests/features/test_rate_limit.rs"
+
+[[test]]
+name = "test_tagging"
+path = "tests/features/test_tagging.rs"
+
+[[test]]
+name = "test_time_estimate"
+path = "tests/features/test_time_estimate.rs"
+
+[[test]]
+name = "test_tool_approval"
+path = "tests/features/test_tool_approval.rs"
+
+[[test]]
+name = "test_verification"
+path = "tests/features/test_verification.rs"
+
+[[test]]
+name = "test_live_integration"
+path = "tests/features/test_live_integration.rs"
+
+# --- Orchestration ---
+[[test]]
+name = "test_spawn_config"
+path = "tests/orchestration/test_spawn_config.rs"
+
+[[test]]
+name = "test_orchestration_registry"
+path = "tests/orchestration/test_registry.rs"
+
+[[test]]
+name = "test_orchestration_budget"
+path = "tests/orchestration/test_budget.rs"
+
+[[test]]
+name = "test_orchestration_tools"
+path = "tests/orchestration/test_tools.rs"
+
+[[test]]
+name = "test_agent_definitions"
+path = "tests/orchestration/test_agent_definitions.rs"
+
+[[test]]
+name = "test_worktree"
+path = "tests/orchestration/test_worktree.rs"
+
+[[test]]
+name = "test_overlay_lookup"
+path = "tests/overlay/test_lookup.rs"
+
+[[test]]
+name = "test_overlay_registration"
+path = "tests/overlay/test_registration.rs"
+
+[[test]]
+name = "test_overlay_reregister"
+path = "tests/overlay/test_reregister.rs"
+
+[[test]]
+name = "test_overlay_live"
+path = "tests/overlay/test_live_overlay.rs"
+
+[[test]]
+name = "test_messagebox_probe"
+path = "tests/overlay/test_messagebox_probe.rs"
+
+[[test]]
+name = "test_cross_wallet_messaging"
+path = "tests/overlay/test_cross_wallet_messaging.rs"
+
+[[test]]
+name = "test_payment_in_message"
+path = "tests/overlay/test_payment_in_message.rs"

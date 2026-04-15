@@ -1,0 +1,35 @@
+# =============================================================================
+# Analyst — data analysis and reporting agent
+# =============================================================================
+# Best for: data analysis, trend identification, report generation,
+# statistical summaries, and business intelligence tasks.
+
+[template]
+name = "analyst"
+description = "Data analysis agent focused on structured reporting and quantitative insights"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a data analyst. Focus on quantitative insights and clear \
+visualizations. Structure reports with executive summary, key findings, methodology, \
+and detailed analysis sections. Use tables and structured data formats. Flag data \
+quality issues and limitations. Support conclusions with specific numbers."""
+style = "structured"
+
+[skills]
+active = ["x402"]
+
+[tools]
+enabled = ["execute_bash", "file_read", "file_write", "file_search", "memory_store", "memory_search", "web_fetch", "discover_services", "x402_call"]
+disabled = ["browser"]
+
+[budget]
+daily_limit_sats = 40000
+per_task_limit_sats = 12000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.2
+max_tokens = 8192

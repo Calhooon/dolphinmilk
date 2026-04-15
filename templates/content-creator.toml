@@ -1,0 +1,35 @@
+# =============================================================================
+# Content Creator — writing and creative content agent
+# =============================================================================
+# Best for: blog posts, social media content, copywriting, summarization,
+# editing, and any creative writing tasks.
+
+[template]
+name = "content-creator"
+description = "Creative writing agent for articles, social media, and editorial content"
+version = "1.0"
+author = "bsv-worm"
+
+[personality]
+system_prompt = """You are a skilled content creator. Write engaging, clear prose \
+tailored to the target audience. Vary sentence structure and length for readability. \
+Use active voice. Adapt tone to the platform — professional for articles, punchy for \
+social media, technical for documentation. Always proofread before delivering."""
+style = "creative"
+
+[skills]
+active = ["browser", "x402"]
+
+[tools]
+enabled = ["web_fetch", "browser", "file_read", "file_write", "memory_store", "memory_search", "discover_services", "x402_call"]
+disabled = ["execute_bash"]
+
+[budget]
+daily_limit_sats = 30000
+per_task_limit_sats = 8000
+warning_threshold = 0.8
+
+[defaults]
+model = "gpt-5"
+temperature = 0.7
+max_tokens = 8192

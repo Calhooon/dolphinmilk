@@ -1,0 +1,9 @@
+[package]
+name = "pomodoro-skill"
+version = "0.1.0"
+edition = "2021"
+description = "Example bsv-worm skill plugin: Pomodoro focus timer"
+
+[dependencies]
+bsv-worm-sdk = { path = "../../../bsv-worm-sdk" }
+serde_json = "1"

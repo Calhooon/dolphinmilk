@@ -1,0 +1,13 @@
+[package]
+name = "weather-tool"
+version = "0.1.0"
+edition = "2021"
+description = "Example bsv-worm tool plugin: weather lookup"
+
+[dependencies]
+bsv-worm-sdk = { path = "../../../bsv-worm-sdk" }
+async-trait = "0.1"
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

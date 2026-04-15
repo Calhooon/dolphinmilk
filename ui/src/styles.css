@@ -1,0 +1,98 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0B1929;
+  --bg-surface: #0F2337;
+  --bg-elevated: #142D42;
+  --bg-user: #14A8C4;
+  --border: #1A3550;
+  --text: rgba(255,255,255,0.8);
+  --text-dim: rgba(255,255,255,0.6);
+  --text-bright: #F5F8FA;
+  --accent: #14A8C4;
+  --accent-dim: #0E8FA8;
+  --accent-warm: #FD967B;
+  --success: #00b69b;
+  --error: #fd5454;
+  --warning: #fcbe2d;
+  --tool-bg: #0D1E30;
+  --tool-border: #1A3048;
+  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  --sans: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+  --sidebar-bg: var(--bg-surface);
+  --sidebar-border: var(--border);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-pill: 999px;
+  --bg-input: #1A2D42;
+  --border-subtle: rgba(207, 207, 207, 0.08);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* Code blocks inside messages */
+pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+/* Prevent iOS auto-zoom on form inputs */
+@media (max-width: 639px) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* Spinner animation */
+@keyframes pulse {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+
+.dot { display: inline-block; animation: pulse 1.4s ease-in-out infinite; }
+.dot:nth-child(2) { animation-delay: 0.16s; }
+.dot:nth-child(3) { animation-delay: 0.32s; }

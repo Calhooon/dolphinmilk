@@ -1,0 +1,8 @@
+# Copy to .cargo/config.toml for local development with path dependencies.
+# DO NOT commit .cargo/config.toml (it is gitignored).
+
+[patch.'https://github.com/Calhooon/bsv-rs']
+bsv-rs = { path = "../bsv-rs" }
+
+[patch.crates-io]
+bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }

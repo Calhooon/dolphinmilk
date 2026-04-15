@@ -1,0 +1,414 @@
+# =============================================================================
+# dolphin-milk configuration
+# =============================================================================
+#
+# Copy this file to dolphin-milk.toml and uncomment the settings you want to change.
+# All values shown are the defaults. Environment variables (DOLPHIN_MILK_*) override
+# both this file and the defaults.
+#
+# Priority (highest wins):
+#   1. DOLPHIN_MILK_* environment variables
+#   2. dolphin-milk.toml (in data_dir or working directory)
+#   3. Built-in defaults
+
+# ---------------------------------------------------------------------------
+# Data directory — root directory for all dolphin-milk state
+# ---------------------------------------------------------------------------
+# All paths (workspace, memory, skills, config) resolve relative to this.
+# Env: DOLPHIN_MILK_DATA_DIR
+# data_dir = "~/.dolphin-milk"
+
+# ---------------------------------------------------------------------------
+# Wallet — connection to the local BRC-100 wallet (bsv-wallet-cli)
+# ---------------------------------------------------------------------------
+[wallet]
+# Base URL for the wallet HTTP API.
+# Env: DOLPHIN_MILK_WALLET_URL
+# url = "http://localhost:3322"
+
+# Origin header sent to the wallet.
+# origin = "http://localhost"
+
+# Request timeout in seconds.
+# Env: DOLPHIN_MILK_WALLET_TIMEOUT
+# timeout = 30
+
+# ---------------------------------------------------------------------------
+# Budget — spending limits and enforcement
+# ---------------------------------------------------------------------------
+[budget]
+# Maximum satoshis per task. Default: 20M.
+# Env: DOLPHIN_MILK_BUDGET_MAX_PER_TASK
+# max_per_task = 20000000
+
+# Maximum satoshis per hour. Default: 50M.
+# Env: DOLPHIN_MILK_BUDGET_MAX_PER_HOUR
+# max_per_hour = 50000000
+
+# Maximum satoshis per day. Default: 200M.
+# Env: DOLPHIN_MILK_BUDGET_MAX_PER_DAY
+# max_per_day = 200000000
+
+# Rolling 7-day budget limit in satoshis. Default: 100M. 0 = unlimited.
+# Env: DOLPHIN_MILK_BUDGET_WEEKLY_SATS
+# max_per_week = 100000000
+
+# Rolling 30-day budget limit in satoshis. Default: 500M. 0 = unlimited.
+# Env: DOLPHIN_MILK_BUDGET_MONTHLY_SATS
+# max_per_month = 500000000
+
+# Lifetime cumulative budget limit in satoshis. Default: 0 (unlimited).
+# Env: DOLPHIN_MILK_BUDGET_LIFETIME_SATS
+# max_lifetime = 0
+
+# Wallet balance below which the agent enters low-power conservative mode.
+# Env: DOLPHIN_MILK_BUDGET_LOW_POWER_THRESHOLD (no direct env; set in TOML)
+# low_power_threshold = 50000
+
+# Satoshi threshold above which payments require manual approval (staging).
+# Set to 0 to disable staging. Default: 500K sats.
+# Env: DOLPHIN_MILK_BUDGET_STAGING_THRESHOLD
+# staging_threshold = 500000
+
+# Budget enforcement mode: "strict" blocks on limit, "advisory" warns but continues.
+# Env: DOLPHIN_MILK_BUDGET_ENFORCEMENT
+# enforcement = "strict"
+
+# ---------------------------------------------------------------------------
+# LLM — inference provider and model settings
+# ---------------------------------------------------------------------------
+[llm]
+# LLM provider: "openai-agent" or "claude-chat". Auto-detected from model name if unset.
+# Env: DOLPHIN_MILK_LLM_PROVIDER
+# default_provider = "openai-agent"
+
+# Model name for inference.
+# Env: DOLPHIN_MILK_LLM_MODEL
+# default_model = "gpt-5-mini"
+
+# Max tokens for standard model responses.
+# Env: DOLPHIN_MILK_LLM_MAX_TOKENS
+# max_tokens = 16384
+
+# Max tokens for reasoning models (o-series, gpt-5.x, gpt-4.1).
+# Env: DOLPHIN_MILK_LLM_MAX_TOKENS_REASONING
+# max_tokens_reasoning = 16384
+
+# Context window size in tokens. Used for proportional tool result capping.
+# Env: DOLPHIN_MILK_LLM_CONTEXT_WINDOW
+# context_window = 128000
+
+# Maximum conversation turns to keep in history.
+# Env: DOLPHIN_MILK_LLM_MAX_HISTORY_TURNS
+# max_history_turns = 40
+
+# Minimum messages guaranteed during history truncation.
+# Env: DOLPHIN_MILK_LLM_MIN_RECENT_MESSAGES
+# min_recent_messages = 8
+
+# Enable two-phase compaction (memory flush + summary) when history exceeds max_history_turns.
+# Env: DOLPHIN_MILK_LLM_COMPACTION_ENABLED
+# compaction_enabled = true
+
+# Model override for compaction LLM calls. Empty = use default_model.
+# Env: DOLPHIN_MILK_LLM_COMPACTION_MODEL
+# compaction_model = ""
+
+# Response cache TTL in seconds. 0 = disabled.
+# Env: DOLPHIN_MILK_LLM_CACHE_TTL_SECS
+# cache_ttl_secs = 3600
+
+# Maximum number of cached responses.
+# Env: DOLPHIN_MILK_LLM_CACHE_MAX_ENTRIES
+# cache_max_entries = 1000
+
+# Extended thinking budget for Claude models (tokens). Omit or empty to disable.
+# When set, Claude uses extended thinking with this token budget.
+# Env: DOLPHIN_MILK_LLM_THINKING_BUDGET
+# thinking_budget = 10000
+
+# Reasoning effort for OpenAI models. Omit or empty for API default.
+# Valid values: "low", "medium", "high".
+# Env: DOLPHIN_MILK_LLM_REASONING_EFFORT
+# reasoning_effort = "medium"
+
+# ---------------------------------------------------------------------------
+# Logging — output format and level
+# ---------------------------------------------------------------------------
+[logging]
+# Log level: TRACE, DEBUG, INFO, WARN, ERROR.
+# Env: DOLPHIN_MILK_LOG_LEVEL
+# level = "INFO"
+
+# Log format: "json" or "text".
+# Env: DOLPHIN_MILK_LOG_FORMAT
+# format = "json"
+
+# ---------------------------------------------------------------------------
+# Memory — persistent markdown+YAML memory storage
+# ---------------------------------------------------------------------------
+[memory]
+# Base directory for memory files.
+# Env: DOLPHIN_MILK_MEMORY_DIR
+# base_dir = "/testbed/memory"
+
+# ---------------------------------------------------------------------------
+# Heartbeat — scheduler and autonomous task management
+# ---------------------------------------------------------------------------
+[heartbeat]
+# Enable the heartbeat scheduler.
+# Env: DOLPHIN_MILK_HEARTBEAT_ENABLED
+# enabled = true
+
+# Seconds between inbox polls.
+# Env: DOLPHIN_MILK_HEARTBEAT_POLL_SECS
+# inbox_poll_secs = 60
+
+# Maximum concurrent tasks the scheduler can run.
+# Env: DOLPHIN_MILK_HEARTBEAT_MAX_CONCURRENT
+# max_concurrent_tasks = 3
+
+# Path to the heartbeat checklist file. Set to "none" or empty to disable.
+# Env: DOLPHIN_MILK_HEARTBEAT_CHECKLIST_FILE
+# checklist_file = "HEARTBEAT.md"
+
+# Cooldown in seconds before re-processing identical HEARTBEAT.md content.
+# checklist_cooldown_secs = 600
+
+# Enable autonomous reflection tasks. Default: false (prevents unexpected costs).
+# Env: DOLPHIN_MILK_REFLECTION_ENABLED
+# reflection_enabled = false
+
+# Interval in seconds between reflection tasks.
+# Env: DOLPHIN_MILK_REFLECTION_INTERVAL
+# reflection_interval_secs = 60
+
+# Model for reflection tasks (use a cheap model).
+# Env: DOLPHIN_MILK_REFLECTION_MODEL
+# reflection_model = "claude-haiku-4-5-20251001"
+
+# Maximum iterations per reflection task.
+# Env: DOLPHIN_MILK_REFLECTION_MAX_ITERATIONS
+# reflection_max_iterations = 3
+
+# Active hours window — scheduler skips ticks outside this window.
+# All fields optional; omit for always-active.
+[heartbeat.active_hours]
+# Start time in HH:MM 24-hour format.
+# Env: DOLPHIN_MILK_HEARTBEAT_ACTIVE_START
+# start = "09:00"
+
+# End time in HH:MM 24-hour format.
+# Env: DOLPHIN_MILK_HEARTBEAT_ACTIVE_END
+# end = "22:00"
+
+# IANA timezone. Defaults to UTC.
+# Env: DOLPHIN_MILK_HEARTBEAT_ACTIVE_TZ
+# timezone = "America/New_York"
+
+# ---------------------------------------------------------------------------
+# Parent — parent wallet for BRC-52 certificate signing
+# ---------------------------------------------------------------------------
+[parent]
+# 66-char hex compressed pubkey of the parent wallet.
+# If empty, parent auth is disabled (dev mode).
+# Env: DOLPHIN_MILK_PARENT_KEY
+# identity_key = ""
+
+# URL of the parent wallet for BRC-52 certificate signing.
+# Env: DOLPHIN_MILK_PARENT_WALLET_URL
+# wallet_url = "http://localhost:3321"
+
+# ---------------------------------------------------------------------------
+# MCP — Model Context Protocol server settings
+# ---------------------------------------------------------------------------
+[mcp]
+# Enable MCP server.
+# enabled = false
+
+# Transport mode: "stdio".
+# transport = "stdio"
+
+# Port for MCP server (when using TCP transport).
+# port = 3001
+
+# Path or command for the wallet MCP server binary.
+# Env: DOLPHIN_MILK_MCP_WALLET_COMMAND
+# wallet_mcp_command = "bsv-wallet-mcp"
+
+# ---------------------------------------------------------------------------
+# Server — HTTP API settings
+# ---------------------------------------------------------------------------
+[server]
+# Enable OpenAI-compatible /v1/chat/completions endpoint.
+# Env: DOLPHIN_MILK_OPENAI_COMPAT
+# openai_compat_enabled = false
+
+# ---------------------------------------------------------------------------
+# Certificates — BRC-52 agent authorization
+# ---------------------------------------------------------------------------
+[certificates]
+# Agent name for the authorization certificate.
+# agent_name = "dolphin-milk-agent"
+
+# Certificate type.
+# certificate_type = "agent-authorization"
+
+# ---------------------------------------------------------------------------
+# Browser — headless Chrome automation via chromiumoxide
+# ---------------------------------------------------------------------------
+[browser]
+# Enable browser automation tool.
+# Env: DOLPHIN_MILK_BROWSER_ENABLED
+# enabled = true
+
+# Path to Chrome/Chromium binary. Empty = auto-fetch.
+# Env: DOLPHIN_MILK_BROWSER_CHROME_PATH
+# chrome_path = ""
+
+# Run Chrome in headless mode.
+# Env: DOLPHIN_MILK_BROWSER_HEADLESS
+# headless = true
+
+# Page load timeout in seconds.
+# Env: DOLPHIN_MILK_BROWSER_TIMEOUT
+# page_load_timeout = 30
+
+# Default wait after navigation in milliseconds.
+# default_wait_ms = 1000
+
+# Maximum number of open pages.
+# Env: DOLPHIN_MILK_BROWSER_MAX_PAGES
+# max_pages = 3
+
+# Viewport width in pixels.
+# viewport_width = 1280
+
+# Viewport height in pixels.
+# viewport_height = 720
+
+# ---------------------------------------------------------------------------
+# Lifecycle — UTXO sweep policies for stale state tokens
+# ---------------------------------------------------------------------------
+[lifecycle]
+# Max age in hours for BudgetAllocation tokens (completed tasks). Default: 168 (7 days).
+# Env: DOLPHIN_MILK_LIFECYCLE_BUDGET_TOKEN_MAX_AGE_HOURS
+# budget_token_max_age_hours = 168
+
+# Max age in hours for Checkpoint tokens. Default: 720 (30 days).
+# Env: DOLPHIN_MILK_LIFECYCLE_CHECKPOINT_MAX_AGE_HOURS
+# checkpoint_max_age_hours = 720
+
+# Whether to auto-sweep on heartbeat tick.
+# Env: DOLPHIN_MILK_LIFECYCLE_AUTO_SWEEP
+# auto_sweep_enabled = true
+
+# Sweep interval in minutes.
+# Env: DOLPHIN_MILK_LIFECYCLE_SWEEP_INTERVAL
+# sweep_interval_minutes = 60
+
+# How often (in iterations) to auto-verify in-memory state against on-chain proofs.
+# 0 = disabled.
+# Env: DOLPHIN_MILK_LIFECYCLE_VERIFY_INTERVAL
+# verify_interval = 10
+
+# How often (in iterations) to check BRC-48 token consistency against LoopState.
+# 0 = disabled.
+# Env: DOLPHIN_MILK_LIFECYCLE_CONSISTENCY_CHECK_INTERVAL
+# consistency_check_interval = 5
+
+# Interval in seconds between basket monitoring log messages (capacity planning).
+# 0 = disabled. Default: 3600 (1 hour).
+# Env: DOLPHIN_MILK_LIFECYCLE_BASKET_MONITORING_INTERVAL
+# basket_monitoring_interval_secs = 3600
+
+# ---------------------------------------------------------------------------
+# Compliance — regulatory tags, retention policies, WORM enforcement
+# ---------------------------------------------------------------------------
+[compliance]
+# Whether compliance mode is enabled. Default: false (opt-in).
+# Env: DOLPHIN_MILK_COMPLIANCE_ENABLED
+# enabled = false
+
+# Default retention period in days. Default: 2555 (7 years, SEC 17a-4).
+# Env: DOLPHIN_MILK_COMPLIANCE_RETENTION_DAYS
+# default_retention_days = 2555
+
+# Regulatory frameworks to tag on proofs. Comma-separated.
+# Env: DOLPHIN_MILK_COMPLIANCE_REGULATIONS
+# regulations = []
+
+# Classification for financial operations.
+# financial_classification = "financial"
+
+# Classification for communication operations.
+# communication_classification = "communication"
+
+# WORM mode: prevent deletion of proofs and transcripts.
+# Env: DOLPHIN_MILK_COMPLIANCE_WORM_MODE
+# worm_mode = false
+
+# ---------------------------------------------------------------------------
+# x402 — service registry and discovery
+# ---------------------------------------------------------------------------
+[x402]
+# Registry URL for discovering x402 paid services.
+# Env: DOLPHIN_MILK_X402_REGISTRY_URL
+# registry_url = "https://x402agency.com/.well-known/agents"
+
+# Cache TTL in seconds for the registry response. Default: 300 (5 minutes).
+# Env: DOLPHIN_MILK_X402_CACHE_TTL
+# registry_cache_ttl_secs = 300
+
+# ---------------------------------------------------------------------------
+# rates — BSV/USD exchange rate configuration
+# ---------------------------------------------------------------------------
+[rates]
+# How often (in seconds) to refresh the BSV/USD rate. Default: 60.
+# Env: DOLPHIN_MILK_RATE_REFRESH_INTERVAL
+# refresh_interval_secs = 60
+
+# Margin percentage applied on top of the spot rate (for JIT proxy use). Default: 0.0.
+# Env: DOLPHIN_MILK_RATE_MARGIN_PERCENT
+# margin_percent = 0.0
+
+# Number of seconds after which a cached rate is considered stale. Default: 300 (5 minutes).
+# Env: DOLPHIN_MILK_RATE_STALE_THRESHOLD
+# stale_threshold_secs = 300
+
+# ---------------------------------------------------------------------------
+# Hooks — lifecycle event hooks for observing, modifying, or blocking
+#          agent behavior. Define as [[hooks]] array entries.
+# ---------------------------------------------------------------------------
+#
+# Event types: pre_tool_execution, post_tool_execution, tool_error,
+#   permission_request, permission_denied, budget_threshold,
+#   session_start, session_end, conversation_turn,
+#   context_compaction, context_overflow, system_prompt_update,
+#   task_created, task_started, task_completed, task_failed,
+#   iteration_start, iteration_end, config_reloaded, config_error
+#
+# Handler types:
+#   command — execute a shell command (template variables from event, e.g. {tool_name})
+#   prompt  — inject a prompt template (not yet implemented)
+#   http    — call a webhook URL (not yet implemented)
+#   agent   — spawn a sub-agent task (not yet implemented)
+#
+# Exit codes for command handlers:
+#   0 = allow, 1 = block (stdout = reason), 2 = modify (stdout = JSON)
+#
+# Example: log every tool execution to a file
+# [[hooks]]
+# event = "pre_tool_execution"
+# handler = { type = "command", cmd = "echo 'Tool: {tool_name}' >> /tmp/dolphin-milk-hooks.log" }
+# priority = 10
+# blocking = false
+# timeout_ms = 5000
+#
+# Example: block dangerous tools
+# [[hooks]]
+# event = "pre_tool_execution"
+# handler = { type = "command", cmd = "if [ '{tool_name}' = 'execute_bash' ]; then echo 'bash blocked by hook'; exit 1; fi" }
+# priority = 1
+# blocking = true
+# timeout_ms = 3000

@@ -1,0 +1,27 @@
+[package]
+name = "bsv-x402-server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "x402 payment verification server — BRC-29 payment flow, service discovery, circuit breaker, rate limiting"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.9"
+ripemd = "0.1"
+lru = "0.12"
+url = "2"
+async-trait = "0.1"
+bsv-rs = { version = "0.3.4", default-features = false, features = ["transaction"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
