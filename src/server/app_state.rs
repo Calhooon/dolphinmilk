@@ -1188,6 +1188,7 @@ pub fn build_router_with_state(state: Arc<AppState>) -> Router {
         .route("/decrypt", post(wallet_ops::decrypt_data))
         .route("/wallet/address", get(wallet_ops::get_funding_address))
         .route("/wallet/check-funding", post(wallet_ops::check_funding))
+        .route("/wallet/split", post(wallet_ops::split_wallet))
         .route("/wallet/utxos", get(wallet_ops::get_wallet_utxos))
         .route("/task/{id}/receipts", get(tasks::get_receipts))
         .route("/task/{id}/conversation", get(tasks::get_conversation))

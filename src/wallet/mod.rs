@@ -74,6 +74,24 @@ pub trait WalletBackend: Send + Sync {
         description: &str,
     ) -> Result<Value, DmError>;
 
+    /// Atomically split the wallet's spendable balance into `count` equal-sized
+    /// UTXOs. Returns `(txid, sats_per_output, count)`.
+    ///
+    /// Primary use case: parallel-agent funding — spawn N sub-agents, each
+    /// claims one split output from a single initial deposit.
+    ///
+    /// Default impl returns "not supported" — only `EmbeddedWalletClient`
+    /// overrides this (the split sequence uses toolbox primitives that aren't
+    /// exposed through the raw HTTP wallet surface). HTTP-backed callers
+    /// should use `dolphin-milk split` CLI instead.
+    async fn split_utxos(&self, _count: u32) -> Result<(String, u64, u32), DmError> {
+        Err(DmError::wallet(
+            "split not supported by this wallet backend — \
+             use `dolphin-milk split <count>` CLI, \
+             or rebuild the server with the `embedded-wallet` feature",
+        ))
+    }
+
     // ── Output Management ────────────────────────────────────────────
 
     /// List spendable outputs and return total balance in satoshis.

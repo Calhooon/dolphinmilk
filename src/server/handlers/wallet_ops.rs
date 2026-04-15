@@ -454,3 +454,49 @@ pub(crate) async fn decrypt_data(
     };
     signed_json_response(&state, auth_ctx, StatusCode::OK, &resp).await
 }
+
+// ── POST /wallet/split ─────────────────────────────────────────────
+//
+// Atomically split the wallet's spendable balance into N equal-sized
+// UTXOs. Thin wrapper over `WalletBackend::split_utxos(count)` which
+// dispatches to the embedded wallet's `split_utxos` method (mirroring
+// bsv-wallet-cli's split.rs logic). HTTP-only wallets return an error.
+
+#[derive(Debug, Deserialize)]
+pub struct SplitRequest {
+    pub count: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SplitResponse {
+    pub txid: String,
+    pub per_output_sats: u64,
+    pub count: u32,
+    pub view_url: String,
+}
+
+pub(crate) async fn split_wallet(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<SplitRequest>,
+) -> Result<axum::Json<SplitResponse>, (StatusCode, String)> {
+    if req.count < 2 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "count must be >= 2".to_string(),
+        ));
+    }
+
+    let (txid, per_output_sats, count) = state
+        .wallet
+        .split_utxos(req.count)
+        .await
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, format!("{e}")))?;
+
+    let view_url = format!("https://whatsonchain.com/tx/{txid}");
+    Ok(axum::Json(SplitResponse {
+        txid,
+        per_output_sats,
+        count,
+        view_url,
+    }))
+}

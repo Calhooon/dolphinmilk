@@ -259,15 +259,17 @@ ui/                         # Lit web frontend (50 TypeScript files)
 ## CLI Reference
 
 ```
-dolphin-milk init                        # First-run setup wizard
-dolphin-milk start [--port PORT]         # Start daemon + web UI
-dolphin-milk think MESSAGE [--model M]   # Single LLM call via x402
+dolphin-milk init                        # First-run setup: wallet, identity, funding address
+dolphin-milk start [--port PORT]         # Start daemon + web UI (alias: serve)
+dolphin-milk think MESSAGE [--model M]   # Single paid LLM call via x402
 dolphin-milk run TASK [--max-iterations] # Autonomous agent loop
 dolphin-milk status                      # Wallet connectivity + balance
 dolphin-milk receive [--suffix N]        # Generate funding address
-dolphin-milk fund TXID [--vout N]        # Internalize funding
-dolphin-milk serve --port PORT           # HTTP server (alias for start)
+dolphin-milk fund TXID [--vout N]        # Internalize external funding
+dolphin-milk split COUNT                 # Split balance into N equal UTXOs (parallel-agent funding)
 dolphin-milk mcp                         # MCP server (stdio)
+dolphin-milk audit                       # BRC-69 key linkage revelations
+dolphin-milk verify-work                 # Offline custody proof verification
 ```
 
 ---

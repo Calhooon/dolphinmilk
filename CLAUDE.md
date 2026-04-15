@@ -216,6 +216,7 @@ dolphin-milk think MESSAGE [--model MODEL]       # Single paid LLM call via x402
 dolphin-milk run TASK [--max-iterations N]       # Autonomous agent loop
 dolphin-milk receive [--suffix N]                # Generate a BSV receive address
 dolphin-milk fund TXID [--vout N] [--suffix N]   # Internalize funding from on-chain tx
+dolphin-milk split COUNT                         # Split spendable balance into N equal UTXOs (mirrors bsv-wallet-cli split)
 dolphin-milk serve [--port N] [--workspace DIR]  # Start daemon (HTTP + scheduler + web UI). Alias: start
 dolphin-milk mcp                                 # Start MCP server (stdio transport)
 dolphin-milk audit                               # BRC-69 key linkage revelations

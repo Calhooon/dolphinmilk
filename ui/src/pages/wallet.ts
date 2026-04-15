@@ -103,6 +103,8 @@ export class DmWallet extends LitElement {
   @state() private data: WalletData | null = null;
   @state() private copied = false;
   @state() private checking = false;
+  @state() private splitting = false;
+  @state() private splitMessage = '';
   @state() private showAllUtxos = false;
   @state() private barAnimated = false;
 
@@ -466,6 +468,17 @@ export class DmWallet extends LitElement {
         font-size: 13px;
       }
 
+      .split-status {
+        margin-top: 12px;
+        padding: 10px 14px;
+        background: rgba(20, 168, 196, 0.08);
+        border: 1px solid rgba(20, 168, 196, 0.24);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text, #E8F0FB);
+        font-family: var(--font-mono, ui-monospace, monospace);
+      }
+
       /* Responsive */
       @media (max-width: 639px) {
         .page-title { font-size: 20px; }
@@ -540,6 +553,52 @@ export class DmWallet extends LitElement {
       }
     } catch { /* best effort */ }
     this.checking = false;
+  }
+
+  private async splitBalance() {
+    const raw = window.prompt(
+      'Split the wallet balance into how many equal UTXOs?\n\n' +
+      'Useful for parallel-agent funding — each output becomes an independently\n' +
+      'spendable chunk. Must be ≥ 2.',
+      '5'
+    );
+    if (raw === null) return;
+    const count = Number.parseInt(raw, 10);
+    if (!Number.isFinite(count) || count < 2) {
+      this.splitMessage = 'Split count must be an integer ≥ 2.';
+      setTimeout(() => { this.splitMessage = ''; }, 4000);
+      return;
+    }
+
+    this.splitting = true;
+    this.splitMessage = '';
+    try {
+      const res = await fetch('/wallet/split', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ count }),
+      });
+      if (res.ok) {
+        const body = await res.json() as {
+          txid: string;
+          per_output_sats: number;
+          count: number;
+          view_url: string;
+        };
+        this.splitMessage =
+          `✓ Split into ${body.count} UTXOs (${body.per_output_sats.toLocaleString()} sats each). ` +
+          `TxID: ${body.txid.slice(0, 16)}…`;
+        await this.loadData();
+      } else {
+        const err = await res.text();
+        this.splitMessage = `Split failed: ${err || res.statusText}`;
+      }
+    } catch (e) {
+      this.splitMessage = `Split failed: ${e instanceof Error ? e.message : 'network error'}`;
+    }
+    this.splitting = false;
+    // Leave success message visible for a while so the user can copy the txid
+    setTimeout(() => { this.splitMessage = ''; }, 15000);
   }
 
   private async refresh() {
@@ -708,16 +767,24 @@ export class DmWallet extends LitElement {
         </div>
 
         <div class="funding-actions">
-          <button class="btn btn-primary" @click=${() => this.checkForFunding()} ?disabled=${this.checking}>
+          <button class="btn btn-primary" @click=${() => this.checkForFunding()} ?disabled=${this.checking || this.splitting}>
             ${this.checking ? 'Checking...' : 'Check for payment'}
+          </button>
+          <button class="btn" @click=${() => this.splitBalance()} ?disabled=${this.checking || this.splitting}>
+            ${this.splitting ? 'Splitting...' : 'Split UTXOs'}
           </button>
           <button class="btn" @click=${() => this.refresh()}>
             Refresh
           </button>
         </div>
 
+        ${this.splitMessage ? html`
+          <div class="split-status">${this.splitMessage}</div>
+        ` : nothing}
+
         <div class="funding-hint">
           ~300 sats per LLM call. $1 gets you ~7,000 calls.
+          Split UTXOs when you need parallel-agent funding.
         </div>
       </div>
     `;

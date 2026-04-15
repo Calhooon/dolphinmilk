@@ -8,7 +8,7 @@ members = [
 
 [package]
 name = "dolphin-milk"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Autonomous AI agent with BSV micropayments — pays for its own LLM inference via x402, every action becomes an on-chain proof"
 repository = "https://github.com/calhooon/dolphinmilk"

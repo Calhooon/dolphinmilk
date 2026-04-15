@@ -42,6 +42,9 @@ async fn main() {
         Some(Command::Init { data_dir }) => {
             std::process::exit(cmd_init(data_dir).await);
         }
+        Some(Command::Split { count }) => {
+            std::process::exit(cmd_split(count).await);
+        }
         Some(Command::Start { port, workspace }) => {
             std::process::exit(cmd_start(port, workspace).await);
         }
@@ -310,7 +313,7 @@ async fn print_funding_instructions(wallet: &WalletClient) {
 }
 
 async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
-    let cfg = match load_config(None) {
+    let mut cfg = match load_config(None) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Config error: {e}");
@@ -318,6 +321,12 @@ async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
         }
     };
     logging::setup_logging(&cfg.logging.level, &cfg.logging.format);
+
+    // Defend against multi-instance collision: if another wallet is on
+    // cfg.wallet.url with a different identity than our .env's ROOT_KEY,
+    // rewrite cfg.wallet.url to a free port so try_spawn_wallet launches
+    // OUR wallet instead of latching onto someone else's.
+    ensure_own_wallet_url(&mut cfg).await;
 
     // Auto-spawn wallet if not already running.
     // The browser UI needs an HTTP wallet for BRC-31 auth, so we must ensure
@@ -416,6 +425,93 @@ async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
 /// Try to spawn `bsv-wallet daemon` as a child process for the wallet DB.
 /// Uses `daemon` (not `serve`) so the Monitor background tasks run —
 /// including `check_for_proofs` which syncs merkle proofs after confirmation.
+/// Ensure the wallet dolphin-milk will use actually belongs to THIS data dir,
+/// not some other wallet that happens to be listening on the same port.
+///
+/// This handles the "multi-instance" case where another dolphin-milk (or
+/// bsv-wallet-cli — e.g. a DMS agent) is already listening on the default
+/// wallet port `:3322`. Without this check, `cmd_serve` would probe that
+/// port, find it responsive, and silently latch onto someone else's wallet,
+/// using THEIR identity for BRC-31 signing and THEIR UTXO set for spending.
+///
+/// Flow:
+/// 1. Read our `.env` ROOT_KEY and compute the expected identity.
+/// 2. Probe `cfg.wallet.url`. If reachable AND identity matches → OK.
+/// 3. Otherwise (unreachable OR identity mismatch): pick a free port,
+///    rewrite `cfg.wallet.url` in place, return it to the caller so
+///    `try_spawn_wallet` can launch `bsv-wallet daemon` on that port
+///    pointing at OUR `wallet.db`.
+///
+/// Returns the expected identity key (for cross-check after spawn) or None
+/// if we have no local wallet state to defend against.
+async fn ensure_own_wallet_url(cfg: &mut dolphin_milk::config::DmConfig) -> Option<String> {
+    // Step 1: do we have local wallet state? If not, nothing to defend.
+    let db_path = cfg.wallet.db_path.clone().unwrap_or_else(|| {
+        cfg.resolved_data_dir()
+            .join("wallet.db")
+            .to_string_lossy()
+            .into_owned()
+    });
+    let db_p = std::path::Path::new(&db_path);
+    if !db_p.exists() {
+        return None;
+    }
+    let env_path = db_p
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(".env");
+    if !env_path.exists() {
+        return None;
+    }
+
+    // Step 2: derive the expected identity from our ROOT_KEY.
+    let env_content = std::fs::read_to_string(&env_path).ok()?;
+    let root_key_hex = env_content.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("ROOT_KEY=")
+            .or_else(|| line.strip_prefix("SERVER_PRIVATE_KEY="))
+            .map(|v| v.trim().trim_matches('"').to_string())
+    })?;
+
+    // Compute identity from ROOT_KEY using bsv-rs primitives.
+    let expected_identity = {
+        use bsv::primitives::PrivateKey;
+        let pk = PrivateKey::from_hex(&root_key_hex).ok()?;
+        pk.public_key().to_hex()
+    };
+
+    // Step 3: probe the configured URL and compare identity.
+    let probed = WalletClient::from_config(&cfg.wallet);
+    let matches_ours = match check_wallet(&probed).await {
+        Ok((identity, _)) => identity == expected_identity,
+        Err(_) => false,
+    };
+
+    if matches_ours {
+        // Our own wallet is already running at cfg.wallet.url — leave it.
+        return Some(expected_identity);
+    }
+
+    // Mismatch or unreachable: pick a free port and rewrite the URL.
+    // The subsequent `try_spawn_wallet(cfg)` will launch `bsv-wallet daemon`
+    // on the new port pointing at OUR db, and downstream probes will find it.
+    let free_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        let port = listener.local_addr().ok()?.port();
+        drop(listener);
+        port
+    };
+
+    let new_url = format!("http://localhost:{free_port}");
+    eprintln!(
+        "  Wallet isolation: port 3322 is taken by another wallet (identity mismatch). \
+         Spawning own wallet at {new_url} backed by {db_path}."
+    );
+    cfg.wallet.url = new_url;
+
+    Some(expected_identity)
+}
+
 fn try_spawn_wallet(cfg: &dolphin_milk::config::DmConfig) -> Option<std::process::Child> {
     let db_path = cfg.wallet.db_path.clone().unwrap_or_else(|| {
         cfg.resolved_data_dir()
@@ -799,8 +895,60 @@ async fn cmd_fund(txid: &str, vout: Option<u32>, suffix: &str) -> i32 {
     }
 }
 
-async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
+async fn cmd_split(count: u32) -> i32 {
     let cfg = match load_config(None) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Config error: {e}");
+            return 1;
+        }
+    };
+    logging::setup_logging(&cfg.logging.level, &cfg.logging.format);
+
+    println!();
+    println!("  Dolphin Milk v{VERSION}");
+    println!("  Splitting spendable balance into {count} UTXOs...");
+    println!();
+
+    #[cfg(feature = "embedded-wallet")]
+    {
+        let wallet =
+            match dolphin_milk::wallet::EmbeddedWalletClient::from_config(&cfg).await {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("  ERROR: Failed to open wallet: {e}");
+                    return 1;
+                }
+            };
+
+        match wallet.split_utxos(count).await {
+            Ok((txid, per_output, n)) => {
+                println!("  ✓ Split into {n} UTXOs ({per_output} sats each)");
+                println!("    TxID:  {txid}");
+                println!("    View:  https://whatsonchain.com/tx/{txid}");
+                println!();
+                println!("  Each output is now independently spendable.");
+                0
+            }
+            Err(e) => {
+                eprintln!("  ERROR: split failed: {e}");
+                1
+            }
+        }
+    }
+
+    #[cfg(not(feature = "embedded-wallet"))]
+    {
+        let _ = count;
+        let _ = cfg;
+        eprintln!("  ERROR: split requires the embedded-wallet feature.");
+        eprintln!("  Rebuild with: cargo build --release --features embedded-wallet");
+        1
+    }
+}
+
+async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
+    let mut cfg = match load_config(None) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Config error: {e}");
@@ -811,7 +959,27 @@ async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
 
     println!("Dolphin Milk v{VERSION}");
 
+    // Defend against multi-instance collision: if another wallet is on
+    // cfg.wallet.url with a different identity than our .env's ROOT_KEY,
+    // rewrite cfg.wallet.url to a free port so try_spawn_wallet launches
+    // OUR wallet instead of latching onto someone else's.
+    ensure_own_wallet_url(&mut cfg).await;
+
+    // Spawn our own wallet daemon if nothing's at the URL yet.
+    let mut _wallet_child: Option<std::process::Child> = None;
     let wallet = WalletClient::from_config(&cfg.wallet);
+    if check_wallet(&wallet).await.is_err() {
+        _wallet_child = try_spawn_wallet(&cfg);
+        if _wallet_child.is_some() {
+            for _ in 0..20 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                if check_wallet(&wallet).await.is_ok() {
+                    break;
+                }
+            }
+        }
+    }
+
     match check_wallet(&wallet).await {
         Ok((identity_key, _)) => {
             println!("Wallet: {} \u{2713}", cfg.wallet.url);
@@ -820,7 +988,6 @@ async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
         Err(_) => {
             println!("Wallet: {} \u{2717}", cfg.wallet.url);
             println!("  WARNING: Wallet not reachable. Server will start but tasks will fail.");
-            println!("  Start with: bsv-wallet daemon --port 3322");
         }
     }
 

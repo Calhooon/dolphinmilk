@@ -88,6 +88,7 @@ use bsv_wallet_toolbox_rs::{
 const TAAL_ARC_URL: &str = "https://arc.taal.com";
 
 // BEEF parsing uses the git bsv crate — local-only, no cross-crate boundary.
+use bsv::script::templates::P2PKH;
 use bsv::transaction::Beef;
 
 /// Originator string passed to all WalletInterface calls.
@@ -1366,6 +1367,205 @@ impl EmbeddedWalletClient {
 
         Ok(result)
     }
+
+    // ── Split ────────────────────────────────────────────────────
+    //
+    // UTXO splitting — take all spendable outputs and atomically
+    // re-emit them as N equal-sized outputs. Used for parallel-agent
+    // funding (e.g. DolphinMilkShake fleet provisioning) where one
+    // large deposit needs to become N spendable chunks.
+    //
+    // MUST match bsv-wallet-cli/src/commands/split.rs exactly. Any
+    // drift between the two implementations will produce different
+    // on-chain UTXO layouts for the same input state. The hardcoded
+    // constants, fee math, basket/tag/label semantics, and the
+    // create_action → internalize_action sequence all come from there.
+    //
+    // Cross-reference: bsv-wallet-cli commit at 2026-04-15 fixed a
+    // hardcoded 200-sat fee reserve that failed on 50-output splits.
+    // We inherit the fixed dynamic estimator below.
+
+    /// Mirrors `bsv-wallet-cli` split constants. The toolbox's
+    /// "wallet payment" internalization protocol expects the
+    /// derivation pair to match these exact strings for the outputs
+    /// to be promoted to `change=1` and become spendable.
+    const SPLIT_DERIVATION_PREFIX: &'static str = "SfKxPIJNgdI=";
+    const SPLIT_DERIVATION_SUFFIX: &'static str = "NaGLC6fMH50=";
+    const SPLIT_BRC29_PROTOCOL: &'static str = "3241645161d8";
+
+    /// Split the wallet's spendable balance into `count` equal-sized
+    /// outputs. Returns `(txid, sats_per_output, count)`.
+    ///
+    /// Behavior mirrors `bsv-wallet-cli split <count>` exactly:
+    /// - Uses `basket: None` on `create_action` (CRITICAL — putting
+    ///   the outputs into a basket breaks the `internalize_action`
+    ///   change-promotion path).
+    /// - Tags each output `["relinquish"]` and labels the tx `["split"]`.
+    /// - Self-internalizes via "wallet payment" protocol with the
+    ///   fixed base64 derivation pair so the outputs become spendable
+    ///   by future `create_action` calls.
+    /// - Dynamic fee reserve: `max(inputs*148 + outputs*34 + 10, 500)`
+    ///   bytes at 1 sat/byte.
+    pub async fn split_utxos(&self, count: u32) -> Result<(String, u64, u32), DmError> {
+        if count < 2 {
+            return Err(DmError::wallet("Split count must be at least 2"));
+        }
+
+        // Step 1: enumerate current spendable outputs.
+        let list_args = ListOutputsArgs {
+            basket: "default".to_string(),
+            tags: None,
+            tag_query_mode: None,
+            include: None,
+            include_custom_instructions: None,
+            include_tags: None,
+            include_labels: None,
+            limit: None,
+            offset: None,
+            seek_permission: None,
+        };
+        let list = self
+            .wallet
+            .list_outputs(list_args, ORIGINATOR)
+            .await
+            .map_err(|e| DmError::wallet(format!("split list_outputs: {e}")))?;
+
+        let total_sats: u64 = list.outputs.iter().map(|o| o.satoshis).sum();
+        let utxo_count = list.outputs.len();
+
+        if utxo_count == 0 || total_sats == 0 {
+            return Err(DmError::wallet(format!(
+                "No UTXOs to split (balance: {total_sats} sats, {utxo_count} UTXOs)"
+            )));
+        }
+
+        // Step 2: dynamic fee reserve. See bsv-wallet-cli commit notes
+        // (2026-04-15) for why a hardcoded 200 sats is insufficient.
+        //   inputs:  ~148 bytes each (sig + pubkey + outpoint)
+        //   outputs:  ~34 bytes each (value + P2PKH script)
+        //   overhead: ~10 bytes (version + locktime + count varints)
+        let estimated_tx_bytes: u64 = (utxo_count as u64 * 148) + (count as u64 * 34) + 10;
+        let fee_reserve: u64 = estimated_tx_bytes.max(500);
+        if total_sats <= fee_reserve {
+            return Err(DmError::wallet(format!(
+                "Balance too low to split ({total_sats} sats, need > {fee_reserve} for fees)"
+            )));
+        }
+        let available = total_sats - fee_reserve;
+        let per_output = available / count as u64;
+        if per_output < 1 {
+            return Err(DmError::wallet(format!(
+                "Cannot create {count} outputs from {available} available sats"
+            )));
+        }
+
+        // Step 3: derive the wallet's own P2PKH locking script via
+        // the SAME derivation path bsv-wallet-cli uses, so the
+        // subsequent internalize_action can sign for these outputs.
+        let protocol_id = json!([2, Self::SPLIT_BRC29_PROTOCOL]);
+        let key_id = format!(
+            "{} {}",
+            Self::SPLIT_DERIVATION_PREFIX,
+            Self::SPLIT_DERIVATION_SUFFIX
+        );
+        let derived_pubkey_hex = self
+            .get_public_key(&protocol_id, &key_id, ANYONE_KEY, true)
+            .await?;
+        let derived_pubkey = PublicKey::from_hex(&derived_pubkey_hex)
+            .map_err(|e| DmError::wallet(format!("split decode pubkey: {e}")))?;
+        let address = derived_pubkey.to_address();
+        let lock = P2PKH::lock_from_address(&address)
+            .map_err(|e| DmError::wallet(format!("split build P2PKH: {e}")))?;
+        let lock_bytes = lock.to_binary();
+
+        // Step 4: build N outputs with basket: None (CRITICAL — see
+        // module-level comment for why a basket breaks the internalize
+        // merge path).
+        let outputs: Vec<CreateActionOutput> = (0..count)
+            .map(|_| CreateActionOutput {
+                locking_script: lock_bytes.clone(),
+                satoshis: per_output,
+                output_description: "split output".to_string(),
+                basket: None,
+                custom_instructions: None,
+                tags: Some(vec!["relinquish".to_string()]),
+            })
+            .collect();
+
+        let args = CreateActionArgs {
+            description: format!("Split into {count} UTXOs ({per_output} sats each)"),
+            input_beef: None,
+            inputs: Some(vec![]),
+            outputs: Some(outputs),
+            lock_time: None,
+            version: None,
+            labels: Some(vec!["split".to_string()]),
+            options: Some(CreateActionOptions {
+                randomize_outputs: Some(false),
+                sign_and_process: Some(true),
+                no_send: Some(false),
+                ..Default::default()
+            }),
+        };
+
+        // Serialize with spending_lock to avoid UTXO contention with
+        // other in-flight wallet ops.
+        let _guard = self.spending_lock.lock().await;
+        let result = self
+            .wallet
+            .create_action(args, ORIGINATOR)
+            .await
+            .map_err(|e| DmError::wallet(format!("split create_action: {e}")))?;
+        drop(_guard);
+
+        let txid = result
+            .txid
+            .ok_or_else(|| DmError::wallet("split: create_action returned no txid"))?;
+        let txid_hex = to_hex(&txid);
+
+        // Step 5: self-internalize with "wallet payment" protocol so
+        // the new outputs become change=1 (spendable by the coin
+        // selector on subsequent create_action calls).
+        let (_, anyone_pubkey) = bsv::wallet::KeyDeriver::anyone_key();
+        let sender_identity_key = anyone_pubkey.to_hex();
+
+        if let Some(beef_bytes) = &result.beef {
+            if let Ok(mut beef) = Beef::from_binary(beef_bytes) {
+                if let Ok(atomic_bytes) = beef.to_binary_atomic(&txid_hex) {
+                    let internalize_outputs: Vec<InternalizeOutput> = (0..count)
+                        .map(|i| InternalizeOutput {
+                            output_index: i,
+                            protocol: "wallet payment".to_string(),
+                            payment_remittance: Some(WalletPayment {
+                                derivation_prefix: Self::SPLIT_DERIVATION_PREFIX.to_string(),
+                                derivation_suffix: Self::SPLIT_DERIVATION_SUFFIX.to_string(),
+                                sender_identity_key: sender_identity_key.clone(),
+                            }),
+                            insertion_remittance: None,
+                        })
+                        .collect();
+
+                    self.wallet
+                        .internalize_action(
+                            InternalizeActionArgs {
+                                tx: atomic_bytes,
+                                outputs: internalize_outputs,
+                                description: "Self-internalize split outputs".to_string(),
+                                labels: Some(vec!["split".to_string()]),
+                                seek_permission: None,
+                            },
+                            ORIGINATOR,
+                        )
+                        .await
+                        .map_err(|e| {
+                            DmError::wallet(format!("split internalize_action: {e}"))
+                        })?;
+                }
+            }
+        }
+
+        Ok((txid_hex, per_output, count))
+    }
 }
 
 // ── WalletBackend trait impl (delegates to inherent methods) ─────────
@@ -1425,6 +1625,10 @@ impl WalletBackend for EmbeddedWalletClient {
         description: &str,
     ) -> Result<Value, DmError> {
         EmbeddedWalletClient::internalize_action(self, tx_bytes, outputs, description).await
+    }
+
+    async fn split_utxos(&self, count: u32) -> Result<(String, u64, u32), DmError> {
+        EmbeddedWalletClient::split_utxos(self, count).await
     }
 
     async fn get_balance(&self) -> Result<u64, DmError> {

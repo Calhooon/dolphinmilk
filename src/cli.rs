@@ -72,6 +72,15 @@ pub enum Command {
         data_dir: Option<String>,
     },
 
+    /// Split the wallet's spendable balance into N equal-sized UTXOs.
+    ///
+    /// Useful for parallel-agent funding: spawn N sub-agents, each claiming
+    /// one split output. Matches `bsv-wallet-cli split` behavior exactly.
+    Split {
+        /// Number of output UTXOs to create (>= 2)
+        count: u32,
+    },
+
     /// Start the daemon (HTTP server + scheduler + web UI)
     Start {
         /// Port to listen on
