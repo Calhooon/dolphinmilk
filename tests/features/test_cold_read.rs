@@ -86,7 +86,7 @@ fn extract_topics_from_memory(content: &str) -> Vec<String> {
 
     // Take top words by frequency
     let mut sorted: Vec<(String, usize)> = word_freq.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (word, _) in sorted.into_iter().take(10) {
         if !topics.contains(&word) {
             topics.push(word);

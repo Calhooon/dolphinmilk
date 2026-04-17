@@ -473,12 +473,11 @@ impl SessionState {
                 Message::SessionStart { task, .. } => {
                     state.task = task.clone();
                 }
-                Message::User { content, .. } => {
+                Message::User { content, .. }
                     // Fall back to first user message if no session_start
-                    if state.task.is_empty() {
+                    if state.task.is_empty() => {
                         state.task = content.clone();
                     }
-                }
                 Message::ThinkRequest { .. } => {
                     state.iterations += 1;
                 }

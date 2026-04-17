@@ -384,7 +384,7 @@ impl Trajectory {
         }
 
         let mut sorted: Vec<(String, usize)> = freq.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
         sorted.into_iter().take(limit).map(|(w, _)| w).collect()
     }
 }

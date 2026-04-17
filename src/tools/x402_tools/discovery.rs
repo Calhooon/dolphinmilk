@@ -244,10 +244,8 @@ pub(crate) fn validate_parameters(rules: &[ValidationRule], params: &Value) -> O
 
     for rule in rules {
         match rule.operator.as_str() {
-            "required" => {
-                if !obj.contains_key(&rule.field) {
-                    return Some(rule.message.clone());
-                }
+            "required" if !obj.contains_key(&rule.field) => {
+                return Some(rule.message.clone());
             }
             ">=" => {
                 if let Some(val) = obj.get(&rule.field).and_then(|v| v.as_f64()) {

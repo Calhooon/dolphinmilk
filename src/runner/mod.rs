@@ -1389,7 +1389,7 @@ impl DmLoop {
             .len()
             .saturating_sub(always_on);
         let mut tool_categories: Vec<(String, usize)> = cat_counts.into_iter().collect();
-        tool_categories.sort_by(|a, b| b.1.cmp(&a.1)); // sort by count desc
+        tool_categories.sort_by_key(|x| std::cmp::Reverse(x.1)); // sort by count desc
 
         // Model info
         let model = &self.config.llm.default_model;

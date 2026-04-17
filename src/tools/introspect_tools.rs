@@ -107,7 +107,7 @@ fn list_task_dirs(workspace: &Path, max: usize) -> Vec<(String, PathBuf)> {
         .collect();
 
     // Sort by modification time, most recent first
-    dirs.sort_by(|a, b| b.2.cmp(&a.2));
+    dirs.sort_by_key(|x| std::cmp::Reverse(x.2));
     dirs.truncate(max);
 
     dirs.into_iter()
@@ -475,11 +475,9 @@ fn task_detail(workspace: &Path, task_id: &str) -> String {
                     started_at = Some(ts);
                 }
             }
-            "user" => {
-                if task_desc.is_empty() {
-                    if let Some(c) = event.get("content").and_then(|v| v.as_str()) {
-                        task_desc = c.chars().take(200).collect();
-                    }
+            "user" if task_desc.is_empty() => {
+                if let Some(c) = event.get("content").and_then(|v| v.as_str()) {
+                    task_desc = c.chars().take(200).collect();
                 }
             }
             "session_end" => {

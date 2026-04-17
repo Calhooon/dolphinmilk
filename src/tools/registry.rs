@@ -528,7 +528,7 @@ pub fn weighted_search(
         })
         .collect();
 
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_by_key(|x| std::cmp::Reverse(x.score));
     results.truncate(limit);
     results
 }

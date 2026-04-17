@@ -97,7 +97,7 @@ pub fn load_commands_with_user_dir(workspace: &Path, user_dir: Option<&Path>) ->
     deduped.reverse();
 
     // Sort by name
-    deduped.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    deduped.sort_by_key(|a| a.name.to_lowercase());
     deduped
 }
 

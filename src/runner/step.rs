@@ -459,11 +459,9 @@ impl DmLoop {
                 if budget_critical {
                     tracing::info!(
                         "Skipping LLM compaction: budget critical ({}% spent)",
-                        if task_budget_limit > 0 {
-                            (self.state.budget.sats_spent * 100 / task_budget_limit) as u32
-                        } else {
-                            0
-                        }
+                        (self.state.budget.sats_spent * 100)
+                            .checked_div(task_budget_limit)
+                            .unwrap_or(0) as u32
                     );
                 } else {
                     let conv_id = self

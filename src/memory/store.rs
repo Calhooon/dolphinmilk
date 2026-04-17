@@ -310,7 +310,7 @@ impl MemoryStore {
         }
 
         // Sort by creation time (newest first)
-        entries.sort_by(|a, b| b.created.cmp(&a.created));
+        entries.sort_by_key(|x| std::cmp::Reverse(x.created));
         Ok(entries)
     }
 

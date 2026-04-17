@@ -251,11 +251,7 @@ pub(crate) async fn get_budget_detail(
     // Compute averages
     for service in by_service.values_mut() {
         for op in service.operations.values_mut() {
-            op.avg_sats = if op.count > 0 {
-                op.total_sats / op.count
-            } else {
-                0
-            };
+            op.avg_sats = op.total_sats.checked_div(op.count).unwrap_or(0);
         }
     }
 
@@ -345,11 +341,7 @@ pub(crate) async fn get_budget_export(
 
     for service in by_service.values_mut() {
         for op in service.operations.values_mut() {
-            op.avg_sats = if op.count > 0 {
-                op.total_sats / op.count
-            } else {
-                0
-            };
+            op.avg_sats = op.total_sats.checked_div(op.count).unwrap_or(0);
         }
     }
 

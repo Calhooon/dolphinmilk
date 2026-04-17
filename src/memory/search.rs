@@ -746,7 +746,7 @@ pub fn extract_key_terms(raw_text: &str) -> String {
     }
 
     // Sort by score descending, take top KEY_TERMS_MAX
-    terms.sort_by(|a, b| b.1.cmp(&a.1));
+    terms.sort_by_key(|x| std::cmp::Reverse(x.1));
     let take = terms.len().min(KEY_TERMS_MAX);
     let selected: Vec<&str> = terms[..take].iter().map(|(w, _)| *w).collect();
 

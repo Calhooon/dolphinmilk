@@ -39,14 +39,13 @@ impl SessionSummarizer {
                         }
                     }
                 }
-                "user" => {
+                "user"
                     // First user message is typically the task
-                    if task == "(unknown task)" {
+                    if task == "(unknown task)" => {
                         if let Some(content) = event.get("content").and_then(|v| v.as_str()) {
                             task = truncate_str(content, 200);
                         }
                     }
-                }
                 "think_response" => {
                     iterations += 1;
 
