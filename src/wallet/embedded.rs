@@ -269,6 +269,17 @@ impl EmbeddedWalletClient {
         Self::open_with_monitor(&db_path, &root_key, Chain::Main).await
     }
 
+    /// Clone of the underlying `Arc<Wallet>`.
+    ///
+    /// Exposed so the `serve` path can hand this wallet to an in-process
+    /// HTTP wallet server (bsv-wallet-cli) bound to `cfg.wallet.url`'s port,
+    /// giving the browser UI a BRC-31 endpoint without requiring an external
+    /// `bsv-wallet-cli daemon` process. Because both code paths share the
+    /// same `Arc`, identity key / UTXO set / cached state stay in sync.
+    pub fn wallet_arc(&self) -> Arc<Wallet<StorageSqlx, Services>> {
+        self.wallet.clone()
+    }
+
     fn resolve_db_and_key(cfg: &crate::config::DmConfig) -> Result<(String, String), DmError> {
         let db_path = cfg.wallet.db_path.clone().unwrap_or_else(|| {
             cfg.resolved_data_dir()

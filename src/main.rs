@@ -328,11 +328,19 @@ async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
     // OUR wallet instead of latching onto someone else's.
     ensure_own_wallet_url(&mut cfg).await;
 
-    // Auto-spawn wallet if not already running.
-    // The browser UI needs an HTTP wallet for BRC-31 auth, so we must ensure
-    // bsv-wallet serve is running. The embedded wallet (in create_app_state)
-    // is only a server-side fallback when bsv-wallet binary isn't installed.
+    // Auto-spawn wallet if not already running. Priority order:
+    //   1. External HTTP wallet already listening on cfg.wallet.url — reuse it.
+    //   2. `bsv-wallet` binary on PATH — spawn it as subprocess (legacy path
+    //      for power users who want a dedicated wallet daemon).
+    //   3. In-process HTTP wallet backed by the embedded Wallet + Monitor —
+    //      the single-binary default. Makes `curl | sh` → `serve` work
+    //      without any other tool installed.
     let mut _wallet_child: Option<std::process::Child> = None;
+    #[cfg(feature = "embedded-wallet")]
+    let mut _embedded_http: Option<(
+        dolphin_milk::wallet::EmbeddedWalletClient,
+        tokio::task::JoinHandle<()>,
+    )> = None;
     let wallet = WalletClient::from_config(&cfg.wallet);
     if check_wallet(&wallet).await.is_err() {
         _wallet_child = try_spawn_wallet(&cfg);
@@ -341,6 +349,19 @@ async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 if check_wallet(&wallet).await.is_ok() {
                     break;
+                }
+            }
+        }
+
+        #[cfg(feature = "embedded-wallet")]
+        if check_wallet(&wallet).await.is_err() {
+            _embedded_http = try_spawn_embedded_http_wallet(&cfg).await;
+            if _embedded_http.is_some() {
+                for _ in 0..40 {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    if check_wallet(&wallet).await.is_ok() {
+                        break;
+                    }
                 }
             }
         }
@@ -366,37 +387,10 @@ async fn cmd_start(port: u16, workspace: Option<String>) -> i32 {
             }
         }
         Err(_) => {
-            // Wallet not reachable even after spawn attempt.
-            // Embedded wallet in create_app_state() may still save us server-side,
-            // but the UI won't have BRC-31 auth without an HTTP wallet.
-            #[cfg_attr(not(feature = "embedded-wallet"), allow(unused_mut))]
-            let mut can_start = false;
-
-            #[cfg(feature = "embedded-wallet")]
-            {
-                let db_path = cfg.wallet.db_path.clone().unwrap_or_else(|| {
-                    cfg.resolved_data_dir()
-                        .join("wallet.db")
-                        .to_string_lossy()
-                        .into_owned()
-                });
-                if std::path::Path::new(&db_path).exists() {
-                    println!();
-                    println!("  Dolphin Milk v{VERSION}");
-                    println!("  WARNING: No HTTP wallet — UI auth will not work.");
-                    println!("  Server starting with embedded wallet (API-only mode).");
-                    println!("  Port: {port}");
-                    println!();
-                    can_start = true;
-                }
-            }
-
-            if !can_start {
-                banner::print_wallet_error(&cfg.wallet.url);
-                eprintln!("  Tip: Run `dolphin-milk init` first to create a wallet.");
-                eprintln!();
-                return 1;
-            }
+            banner::print_wallet_error(&cfg.wallet.url);
+            eprintln!("  Tip: Run `dolphin-milk init` first to create a wallet.");
+            eprintln!();
+            return 1;
         }
     }
 
@@ -560,6 +554,61 @@ fn try_spawn_wallet(cfg: &dolphin_milk::config::DmConfig) -> Option<std::process
         .stderr(std::process::Stdio::null())
         .spawn()
         .ok()
+}
+
+/// Start an in-process HTTP wallet server on `cfg.wallet.url`'s port, backed
+/// by the embedded wallet (same `Arc<Wallet>`, so identity/balance/UTXOs
+/// match what dolphin-milk's server-side code sees).
+///
+/// This is what makes `curl | sh` → `dolphin-milk init` → `dolphin-milk serve`
+/// work as a single binary without requiring `bsv-wallet-cli` on PATH: the
+/// browser UI's BRC-31 auth hits this server instead of an external daemon.
+///
+/// Returns the spawned task handle + the EmbeddedWalletClient so the caller
+/// can keep both alive for the process lifetime. Only usable with the
+/// `embedded-wallet` feature.
+#[cfg(feature = "embedded-wallet")]
+async fn try_spawn_embedded_http_wallet(
+    cfg: &dolphin_milk::config::DmConfig,
+) -> Option<(
+    dolphin_milk::wallet::EmbeddedWalletClient,
+    tokio::task::JoinHandle<()>,
+)> {
+    // Extract port from wallet URL.
+    let wallet_port = cfg
+        .wallet
+        .url
+        .rsplit(':')
+        .next()
+        .and_then(|p: &str| p.parse::<u16>().ok())
+        .unwrap_or(3322);
+
+    // Open embedded wallet with Monitor so merkle proofs (BUMPs) get
+    // fetched automatically. Same wallet instance is shared with the
+    // HTTP server below via the Arc<Wallet>.
+    let embedded =
+        match dolphin_milk::wallet::EmbeddedWalletClient::from_config_with_monitor(cfg).await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("  Embedded wallet open failed: {e}");
+                return None;
+            }
+        };
+
+    let wallet_arc = embedded.wallet_arc();
+    let wallet_state = bsv_wallet_cli::server::make_wallet_state_from_arc(wallet_arc);
+
+    eprintln!("  Starting in-process HTTP wallet on :{wallet_port}");
+
+    let server_config = bsv_wallet_cli::server::ServerConfig::default();
+    let handle = tokio::spawn(async move {
+        if let Err(e) = bsv_wallet_cli::server::run(wallet_state, wallet_port, server_config).await
+        {
+            tracing::error!("Embedded HTTP wallet server exited: {e}");
+        }
+    });
+
+    Some((embedded, handle))
 }
 
 async fn cmd_status() -> i32 {
@@ -964,8 +1013,14 @@ async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
     // OUR wallet instead of latching onto someone else's.
     ensure_own_wallet_url(&mut cfg).await;
 
-    // Spawn our own wallet daemon if nothing's at the URL yet.
+    // Spawn our own wallet daemon if nothing's at the URL yet. Same priority
+    // order as cmd_start: external HTTP → subprocess → in-process embedded.
     let mut _wallet_child: Option<std::process::Child> = None;
+    #[cfg(feature = "embedded-wallet")]
+    let mut _embedded_http: Option<(
+        dolphin_milk::wallet::EmbeddedWalletClient,
+        tokio::task::JoinHandle<()>,
+    )> = None;
     let wallet = WalletClient::from_config(&cfg.wallet);
     if check_wallet(&wallet).await.is_err() {
         _wallet_child = try_spawn_wallet(&cfg);
@@ -974,6 +1029,19 @@ async fn cmd_serve(port: u16, workspace: Option<String>) -> i32 {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 if check_wallet(&wallet).await.is_ok() {
                     break;
+                }
+            }
+        }
+
+        #[cfg(feature = "embedded-wallet")]
+        if check_wallet(&wallet).await.is_err() {
+            _embedded_http = try_spawn_embedded_http_wallet(&cfg).await;
+            if _embedded_http.is_some() {
+                for _ in 0..40 {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    if check_wallet(&wallet).await.is_ok() {
+                        break;
+                    }
                 }
             }
         }

@@ -72,11 +72,12 @@ bsv-x402-server = { path = "bsv-x402-server" }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 bsv-wallet-toolbox-rs = { version = "0.3.38", optional = true }
+bsv-wallet-cli = { version = "0.1.23", optional = true, default-features = false }
 
 [features]
 default = ["embedded-wallet", "embed-ui", "browser"]
 embed-ui = ["rust-embed", "mime_guess"]
-embedded-wallet = ["bsv-wallet-toolbox-rs"]
+embedded-wallet = ["bsv-wallet-toolbox-rs", "bsv-wallet-cli"]
 browser = ["chromiumoxide"]
 external-wallet = []
 
