@@ -1,0 +1,14 @@
+[
+  {
+    "id": 26,
+    "name": "cost_aggregation",
+    "description": "Verify cost aggregation across multiple x402 calls",
+    "baseline_sats": 4500
+  },
+  {
+    "id": 27,
+    "name": "cost_comparison",
+    "description": "Compare costs between providers for equivalent tasks",
+    "baseline_sats": 3200
+  }
+]
