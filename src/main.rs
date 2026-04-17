@@ -912,14 +912,13 @@ async fn cmd_split(count: u32) -> i32 {
 
     #[cfg(feature = "embedded-wallet")]
     {
-        let wallet =
-            match dolphin_milk::wallet::EmbeddedWalletClient::from_config(&cfg).await {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("  ERROR: Failed to open wallet: {e}");
-                    return 1;
-                }
-            };
+        let wallet = match dolphin_milk::wallet::EmbeddedWalletClient::from_config(&cfg).await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("  ERROR: Failed to open wallet: {e}");
+                return 1;
+            }
+        };
 
         match wallet.split_utxos(count).await {
             Ok((txid, per_output, n)) => {

@@ -81,7 +81,7 @@ use bsv::wallet::{
 
 // ── Toolbox imports ──────────────────────────────────────────────────
 use bsv_wallet_toolbox_rs::{
-    services::providers::ArcConfig, Chain, Services, ServicesOptions, StorageSqlx, Wallet,
+    services::providers::ArcConfig, Chain, Monitor, Services, ServicesOptions, StorageSqlx, Wallet,
     WalletStorageWriter,
 };
 
@@ -105,6 +105,11 @@ pub struct EmbeddedWalletClient {
     spending_lock: Arc<Mutex<()>>,
     identity_key: String,
     http_client: reqwest::Client,
+    /// Optional background Monitor — started only by `open_with_monitor` /
+    /// `from_config_with_monitor`. Held via `Arc` so the daemon keeps its
+    /// spawned tokio tasks (including `check_for_proofs`, which fills in
+    /// merkle proofs/BUMPs after confirmation) alive for the process lifetime.
+    _monitor: Option<Arc<Monitor<StorageSqlx, Services>>>,
 }
 
 impl EmbeddedWalletClient {
@@ -112,48 +117,74 @@ impl EmbeddedWalletClient {
     ///
     /// The `root_key_hex` is the 64-char hex private key. The database
     /// at `db_path` must already exist (created by `init()`).
+    ///
+    /// Does NOT start the background Monitor. Use [`open_with_monitor`] for
+    /// long-running daemons that need automatic merkle-proof syncing.
     pub async fn open(db_path: &str, root_key_hex: &str, chain: Chain) -> Result<Self, DmError> {
+        Self::open_inner(db_path, root_key_hex, chain, false).await
+    }
+
+    /// Open an existing wallet database AND start the background Monitor.
+    ///
+    /// The Monitor runs 12 tokio background tasks — most importantly
+    /// `check_for_proofs` (every 60s), which fetches merkle proofs/BUMPs
+    /// from configured block-header sources and stitches them into
+    /// `proven_txs`. Without it, transactions confirm on-chain but their
+    /// BEEF never gets merkle paths — downstream BEEF consumers will
+    /// reject the "raw-tx-only" form.
+    ///
+    /// Requires a second `StorageSqlx` handle on the same SQLite DB
+    /// because `Wallet::with_chain` takes owned values. SQLite handles
+    /// the concurrency via `busy_timeout`; `bsv-wallet-cli daemon` uses
+    /// the same pattern in production.
+    pub async fn open_with_monitor(
+        db_path: &str,
+        root_key_hex: &str,
+        chain: Chain,
+    ) -> Result<Self, DmError> {
+        Self::open_inner(db_path, root_key_hex, chain, true).await
+    }
+
+    async fn open_inner(
+        db_path: &str,
+        root_key_hex: &str,
+        chain: Chain,
+        start_monitor: bool,
+    ) -> Result<Self, DmError> {
         let root_key = PrivateKey::from_hex(root_key_hex)
             .map_err(|e| DmError::wallet(format!("invalid root key: {e}")))?;
         let identity_key = root_key.public_key().to_hex();
 
-        let storage = StorageSqlx::open(db_path)
-            .await
-            .map_err(|e| DmError::wallet(format!("open storage: {e}")))?;
-        storage
-            .make_available()
-            .await
-            .map_err(|e| DmError::wallet(format!("make_available: {e}")))?;
+        // Optional Monitor: open a second storage+services pair, wire ChainTracker,
+        // and start the daemon before the wallet is constructed. The Monitor keeps
+        // its own storage Arc for the lifetime of the process.
+        let monitor = if start_monitor {
+            let mon_storage = Self::open_storage(db_path).await?;
+            let mon_services = Self::build_services(chain)?;
+            if let Some(ref ct) = mon_services.chaintracks {
+                mon_storage.set_chain_tracker(ct.clone()).await;
+            }
+            let storage_arc = Arc::new(mon_storage);
+            let services_arc = Arc::new(mon_services);
+            let m = Arc::new(Monitor::new(storage_arc, services_arc));
+            m.start()
+                .await
+                .map_err(|e| DmError::wallet(format!("monitor start: {e}")))?;
+            tracing::info!("Embedded wallet Monitor started (check_for_proofs enabled)");
+            Some(m)
+        } else {
+            None
+        };
 
-        let services = {
-            let mut opts = match chain {
-                Chain::Main => ServicesOptions::mainnet(),
-                Chain::Test => ServicesOptions::testnet(),
-            };
-            if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-                opts = opts.with_chaintracks_url(url);
-            }
-            // Optionally authenticate TAAL broadcasts via MAIN_TAAL_API_KEY
-            // env. TAAL accepts `Authorization: <key>` without the "Bearer "
-            // prefix that ArcConfig.api_key would produce, so we pass the
-            // header directly via additional_headers. TAAL is the first
-            // post_beef provider in bsv-wallet-toolbox-rs 0.3.37+.
-            if let Ok(api_key) = std::env::var("MAIN_TAAL_API_KEY") {
-                if !api_key.is_empty() {
-                    let mut headers = std::collections::HashMap::new();
-                    headers.insert("Authorization".to_string(), api_key);
-                    opts = opts.with_arc(
-                        TAAL_ARC_URL,
-                        Some(ArcConfig {
-                            headers: Some(headers),
-                            ..Default::default()
-                        }),
-                    );
-                }
-            }
-            Services::with_options(chain, opts)
+        // Wallet's own storage+services pair. Wired with ChainTracker so
+        // Layer 4 BEEF validation on `create_action` uses the same source
+        // as the Monitor. Must be a distinct Services instance — cannot
+        // share Arc across ownership boundary.
+        let storage = Self::open_storage(db_path).await?;
+        let services = Self::build_services(chain)?;
+        if let Some(ref ct) = services.chaintracks {
+            storage.set_chain_tracker(ct.clone()).await;
         }
-        .map_err(|e| DmError::wallet(format!("services init: {e}")))?;
 
         let wallet = Wallet::with_chain(
             Some(root_key),
@@ -170,14 +201,75 @@ impl EmbeddedWalletClient {
             spending_lock: Arc::new(Mutex::new(())),
             identity_key,
             http_client: reqwest::Client::new(),
+            _monitor: monitor,
         })
+    }
+
+    async fn open_storage(db_path: &str) -> Result<StorageSqlx, DmError> {
+        // Toolbox's StorageSqlx::open sets `busy_timeout=5000` internally,
+        // which is what keeps the Monitor + Wallet handles from deadlocking
+        // on the same SQLite DB.
+        let storage = StorageSqlx::open(db_path)
+            .await
+            .map_err(|e| DmError::wallet(format!("open storage: {e}")))?;
+        storage
+            .make_available()
+            .await
+            .map_err(|e| DmError::wallet(format!("make_available: {e}")))?;
+        Ok(storage)
+    }
+
+    fn build_services(chain: Chain) -> Result<Services, DmError> {
+        let mut opts = match chain {
+            Chain::Main => ServicesOptions::mainnet(),
+            Chain::Test => ServicesOptions::testnet(),
+        };
+        if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
+            opts = opts.with_chaintracks_url(url);
+        }
+        // Optionally authenticate TAAL broadcasts via MAIN_TAAL_API_KEY
+        // env. TAAL accepts `Authorization: <key>` without the "Bearer "
+        // prefix that ArcConfig.api_key would produce, so we pass the
+        // header directly via additional_headers. TAAL is the first
+        // post_beef provider in bsv-wallet-toolbox-rs 0.3.37+.
+        if let Ok(api_key) = std::env::var("MAIN_TAAL_API_KEY") {
+            if !api_key.is_empty() {
+                let mut headers = std::collections::HashMap::new();
+                headers.insert("Authorization".to_string(), api_key);
+                opts = opts.with_arc(
+                    TAAL_ARC_URL,
+                    Some(ArcConfig {
+                        headers: Some(headers),
+                        ..Default::default()
+                    }),
+                );
+            }
+        }
+        Services::with_options(chain, opts)
+            .map_err(|e| DmError::wallet(format!("services init: {e}")))
     }
 
     /// Create from config — resolves db_path and root key, opens existing wallet.
     ///
     /// Root key is read from `SERVER_PRIVATE_KEY` env var or `{db_dir}/.env` file.
     /// The database must already exist (created by `dolphin-milk init`).
+    ///
+    /// Does NOT start the Monitor. Use [`from_config_with_monitor`] for the
+    /// `serve` path.
     pub async fn from_config(cfg: &crate::config::DmConfig) -> Result<Self, DmError> {
+        let (db_path, root_key) = Self::resolve_db_and_key(cfg)?;
+        Self::open(&db_path, &root_key, Chain::Main).await
+    }
+
+    /// Like [`from_config`], but also starts the background Monitor so the
+    /// embedded wallet automatically fills in merkle proofs (BUMPs) for
+    /// confirmed transactions. Call this from the `serve` path only.
+    pub async fn from_config_with_monitor(cfg: &crate::config::DmConfig) -> Result<Self, DmError> {
+        let (db_path, root_key) = Self::resolve_db_and_key(cfg)?;
+        Self::open_with_monitor(&db_path, &root_key, Chain::Main).await
+    }
+
+    fn resolve_db_and_key(cfg: &crate::config::DmConfig) -> Result<(String, String), DmError> {
         let db_path = cfg.wallet.db_path.clone().unwrap_or_else(|| {
             cfg.resolved_data_dir()
                 .join("wallet.db")
@@ -185,7 +277,6 @@ impl EmbeddedWalletClient {
                 .into_owned()
         });
 
-        // Read root key: env var first, then .env file next to the DB
         let root_key = if let Ok(key) = std::env::var("ROOT_KEY") {
             key
         } else if let Ok(key) = std::env::var("SERVER_PRIVATE_KEY") {
@@ -204,7 +295,7 @@ impl EmbeddedWalletClient {
             )));
         }
 
-        Self::open(&db_path, &root_key, Chain::Main).await
+        Ok((db_path, root_key))
     }
 
     /// Initialize a brand-new wallet (creates SQLite DB + runs migrations).
@@ -1557,9 +1648,7 @@ impl EmbeddedWalletClient {
                             ORIGINATOR,
                         )
                         .await
-                        .map_err(|e| {
-                            DmError::wallet(format!("split internalize_action: {e}"))
-                        })?;
+                        .map_err(|e| DmError::wallet(format!("split internalize_action: {e}")))?;
                 }
             }
         }

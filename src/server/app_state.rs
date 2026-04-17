@@ -198,7 +198,7 @@ pub async fn create_app_state(mut config: DmConfig, workspace: PathBuf) -> Arc<A
         } else {
             #[cfg(feature = "embedded-wallet")]
             {
-                match crate::wallet::EmbeddedWalletClient::from_config(&config).await {
+                match crate::wallet::EmbeddedWalletClient::from_config_with_monitor(&config).await {
                     Ok(w) => {
                         tracing::info!(
                             "External wallet not reachable — using embedded wallet (in-process)"

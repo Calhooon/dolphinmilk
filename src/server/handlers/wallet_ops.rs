@@ -480,10 +480,7 @@ pub(crate) async fn split_wallet(
     axum::Json(req): axum::Json<SplitRequest>,
 ) -> Result<axum::Json<SplitResponse>, (StatusCode, String)> {
     if req.count < 2 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "count must be >= 2".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "count must be >= 2".to_string()));
     }
 
     let (txid, per_output_sats, count) = state
